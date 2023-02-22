@@ -75,7 +75,7 @@ class ModelTuner:
                 parent1 = choice(self.population)
                 parent2 = choice(self.population)
                 child = parent1.mate(parent2)
-            child = mutate(child)
+            child = mutate(child, self.steps, nuc_change_chance, 1)
             new_pop.append(child)
         self.population = new_pop
 
@@ -91,17 +91,13 @@ class ModelTuner:
                 data = self.results[model.dna[:i]]
                 self.results[model.dna] = self.pool.apply_async(train_step, args=(data, *args))
 
-    def calc_fitness(self, criterion='MSE'):
+    def calc_fitness(self, criterion=mse):
         # I keep this if statement to remind me to add more criterion
-        if criterion == 'MSE':
-            for model in self.population:
-                model.fitness = -mse(self.data[self.y_col], self.results[model.dna])
-            worst = min(model).fitness
-            for model in self.population:
-                model.fitness -= worst
+        for model in self.population:
+            model.fitness = criterion(self.data[self.y_col], self.results[model.dna])
 
 
-    def run(self, criterion='MSE'):
+    def run(self, criterion):
         for gen in range(self.generations):
             if gen == 0:
                 self.populate_init(gen)
@@ -109,8 +105,9 @@ class ModelTuner:
                 self.populate_next()
             self.train_population(self.X_train)
             self.calc_fitness(criterion)
-            if gen >= self.generations - 1:
-                return max(self.population)
+
+        if criterion == 'MSE':
+            return min(self.population)
 
 
 class Model:
@@ -161,10 +158,10 @@ def mutate(model, framework, prob, max_mag):
             if random() < prob:
                 index = framework[i]['args'][j].index(nucleotide) + randint(-max_mag, max_mag)
                 index = min(0, max(len(framework[i]['args'][j]) - 1), index)
-                model.dna[i][j] =
+                model.dna[i][j] = framework[i]['args'][index]
 
 if __name__ == '__main__':
-    steps
+    pass
 
 """
 step 1. Build skeleton of model with the following structure:
