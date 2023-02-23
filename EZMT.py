@@ -1,9 +1,9 @@
 from functools import partial
 import pandas as pd
-import numpy as np
 from random import choice, uniform, random, randint
 import multiprocessing as mp
 from sklearn.metrics import mean_squared_error as mse
+from sklearn.model_selection import StratifiedShuffleSplit
 
 
 class ModelTuner:
@@ -15,10 +15,15 @@ class ModelTuner:
         else:
             self.pool = pool
 
-        self.X_train, self.X_test, self.Y_train, self.Y_test = tts(data, y_col, 0.75)
+        # Todo actually split this better. Stratified with samples = generations?
+        train, test = data, data
+        self.X_train, self.y_train = train.drop(columns=y_col), train[y_col]
+        self.X_test, self.y_test = test.drop(columns=y_col), test[y_col]
+
+
         self.steps = []
         self.generations = generations
-        self.population = [Model([], []) for i in range(pop_size)]
+        self.population = [Model([]) for i in range(pop_size)]
         self.results = dict()
 
     def add_step(self, step):
@@ -36,7 +41,7 @@ class ModelTuner:
         """
 
         step['func'] = partial(step_await, step['func'])
-        self.steps.append(step_await)
+        self.steps.append(step)
 
     def populate_init(self, generation):
         """
@@ -44,6 +49,7 @@ class ModelTuner:
         In other words, generate each population member's first gene, then do everyone's second, etc
         """
         # Generate initial population
+        print(self.steps)
         if generation == 0:
             for step in self.steps:
                 # One gene corresponds to one function in the chain of steps
@@ -81,21 +87,24 @@ class ModelTuner:
         self.population = new_pop
 
     def train_population(self, data):
-        self.results = {[]: data}
+        self.results = {'': data}
         for i, train_step in enumerate(self.steps):
             for model in self.population:
                 # check if result of model with identical development up until this stage has already been calculated
-                if model.dna in self.results.keys():
+                if dna2str(model.dna[:i+1]) in self.results.keys():
                     continue
                 # get data with matching genes from previous stage of development and apply function + args of next gene
                 args = model.dna[i]
-                data = self.results[model.dna[:i]]
-                self.results[model.dna] = self.pool.apply_async(train_step, args=(data, *args))
+                data = self.results[dna2str(model.dna[:i])]
+                self.results[dna2str(model.dna)[:i+1]] = self.pool.apply_async(train_step, args=(data, *args))
 
     def calc_fitness(self, criterion=mse):
-        # I keep this if statement to remind me to add more criterion
         for model in self.population:
-            model.fitness = criterion(self.data[self.y_col], self.results[model.dna])
+            result = self.results[dna2str(model.dna)]
+            if not isinstance(self.results[dna2str(model.dna)], (pd.Series, pd.DataFrame)):
+                result = result.get()
+
+            model.fitness = criterion(self.y_train, self.results[dna2str(model.dna)])
 
 
     def run(self, criterion):
@@ -121,27 +130,28 @@ class Model:
         return self.fitness < other.fitness
 
     def __eq__(self, other):
-        return self.dna2str() == other.dna2str()
+        return dna2str(self.dna) == other.dna2str()
 
     def __hash__(self):
-        return hash(self.dna2str())
+        return hash(dna2str(self.dna))
 
     def __str__(self):
-        return self.dna2str()
+        return dna2str(self.dna)
 
     def add_gene(self, gene):
         self.dna.append(gene)
 
-    def dna2str(self):
-        dna_str = ''
-        for gene in self.dna:
-            for nucleotide in gene:
-                dna_str += str(nucleotide) + '|'
-            dna_str += '//'
-        return dna_str
-
     def mate(self, other):
         pass
+
+
+def dna2str(dna):
+    dna_str = ''
+    for gene in dna:
+        for nucleotide in gene:
+            dna_str += str(nucleotide) + '|'
+        dna_str += '//'
+    return dna_str
 
 
 # Assume if not pd.DataFrame, then it's a pool.apply_async still running
@@ -164,6 +174,7 @@ def natural_selection(
             m for m in population if m.fitness * (1 + uniform(-sv, sv)) > uniform(0, max_fitness)
         ]
 
+
 def mutate(model, framework, prob, max_mag):
     # framework provides possible mutations of model
     # Until nucleotides can represent continuous variables, max_mag is positions from the current nucleotide's value
@@ -175,8 +186,44 @@ def mutate(model, framework, prob, max_mag):
                 model.dna[i][j] = framework[i]['args'][j][index]
     return model
 
+
 if __name__ == '__main__':
-    pass
+    from multiprocessing import Pool
+    df = pd.DataFrame({'a': [0, 0, 0, 0, 1, 1, 1, 1],
+                       'b': [0, 0, 0, 0, 0, 0, 1, 1],
+                       'y': [0, 0, 0, 0, 1, 1, 2, 2]})
+
+    def do_nothing(data, n):
+        return data
+
+    def add_cols(data, useless_variable):
+        return data.sum(axis=1)
+
+    p = Pool(2)
+    mt = ModelTuner(p, df, 'y')
+    mt.add_step(
+        {
+            'name': 'do_nothing',
+            'func': do_nothing,
+            'args': [
+                [0, 1, 2, 3, 4, 5]
+            ]
+        }
+    )
+
+    mt.add_step(
+        {
+            'name': 'add_cols',
+            'func': add_cols,
+            'args': [
+                ['ooga', 'booga', 'elephant', 'preposterous', 'waka waka', 'bbb']
+            ]
+        }
+    )
+
+    result = mt.run(mse)
+    print(result)
+
 
 """
 step 1. Build skeleton of model with the following structure:
