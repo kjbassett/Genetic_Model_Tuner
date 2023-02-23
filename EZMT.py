@@ -120,6 +120,12 @@ class Model:
     def __lt__(self, other):
         return self.fitness < other.fitness
 
+    def __eq__(self, other):
+        return self.dna2str() == other.dna2str()
+
+    def __hash__(self):
+        return hash(self.dna2str())
+
     def add_gene(self, gene):
         self.dna.append(gene)
 
