@@ -67,13 +67,14 @@ class ModelTuner:
         new_pop = self.population[0:elitism]
 
         survivors = natural_selection(self.population)
+        survivors = list(set([*survivors, *new_pop]))
 
         for _ in range(len(self.population) - elitism):
             if reproduction == 'asexual':
-                child = choice(self.population)
+                child = choice(survivors)
             elif reproduction == 'sexual':
-                parent1 = choice(self.population)
-                parent2 = choice(self.population)
+                parent1 = choice(survivors)
+                parent2 = choice(survivors)
                 child = parent1.mate(parent2)
             child = mutate(child, self.steps, nuc_change_chance, 1)
             new_pop.append(child)
@@ -112,9 +113,8 @@ class ModelTuner:
 
 class Model:
 
-    def __init__(self, dna, steps):
+    def __init__(self, dna=None):
         self.dna = dna
-        self.steps = steps
         self.fitness = 0
 
     def __lt__(self, other):
@@ -126,12 +126,18 @@ class Model:
     def __hash__(self):
         return hash(self.dna2str())
 
+    def __str__(self):
+        return self.dna2str()
+
     def add_gene(self, gene):
         self.dna.append(gene)
 
     def dna2str(self):
-        dna_str = list(map('|'.join, self.dna))
-        dna_str = '//'.join(dna_str)
+        dna_str = ''
+        for gene in self.dna:
+            for nucleotide in gene:
+                dna_str += str(nucleotide) + '|'
+            dna_str += '//'
         return dna_str
 
     def mate(self, other):
@@ -152,8 +158,10 @@ def natural_selection(
 ):
     sv = survival_variation
     if selection_method == 'weighted_prob':
+        # Todo just do a choice function with weights and no replacement
+        max_fitness = max([p.fitness for p in population])
         return [
-            m for m in population if m.fitness * (1 + uniform(-sv, sv)) > uniform(0, max(population).fitness)
+            m for m in population if m.fitness * (1 + uniform(-sv, sv)) > uniform(0, max_fitness)
         ]
 
 def mutate(model, framework, prob, max_mag):
@@ -163,8 +171,9 @@ def mutate(model, framework, prob, max_mag):
         for j, nucleotide in enumerate(model.dna[i]):
             if random() < prob:
                 index = framework[i]['args'][j].index(nucleotide) + randint(-max_mag, max_mag)
-                index = min(0, max(len(framework[i]['args'][j]) - 1), index)
-                model.dna[i][j] = framework[i]['args'][index]
+                index = min(0, max(len(framework[i]['args'][j]) - 1, index))
+                model.dna[i][j] = framework[i]['args'][j][index]
+    return model
 
 if __name__ == '__main__':
     pass
