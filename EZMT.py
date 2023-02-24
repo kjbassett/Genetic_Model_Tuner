@@ -8,7 +8,7 @@ from sklearn.model_selection import StratifiedShuffleSplit
 
 class ModelTuner:
 
-    def __init__(self, pool, data, y_col, generations=1, pop_size=20, method=None):
+    def __init__(self, pool, data, y_col, generations=1, pop_size=20, goal='min'):
         # Generations can be used for batches of data and not for evolution
         if pool is None:
             self.pool = mp.Pool(8)
@@ -24,6 +24,7 @@ class ModelTuner:
         self.steps = []
         self.generations = generations
         self.population = [Model([]) for i in range(pop_size)]
+        self.goal = goal
         self.results = dict()
 
     def add_step(self, step):
@@ -86,44 +87,57 @@ class ModelTuner:
             new_pop.append(child)
         self.population = new_pop
 
-    def train_population(self, data):
+    def learn(self, data):
         self.results = {'': data}
         for i, train_step in enumerate(self.steps):
             for model in self.population:
+                prev_dna = dna2str(model.dna[:i])
+                current_dna = dna2str(model.dna[:i+1])
+
                 # check if result of model with identical development up until this stage has already been calculated
-                if dna2str(model.dna[:i+1]) in self.results.keys():
+                if dna2str(current_dna) in self.results.keys():
                     continue
+
                 # get data with matching genes from previous stage of development and apply function + args of next gene
                 args = model.dna[i]
-                data = self.results[dna2str(model.dna[:i])]
-                self.results[dna2str(model.dna)[:i+1]] = self.pool.apply_async(train_step, args=(data, *args))
+                data = self.results[prev_dna]
+                self.results[current_dna] = self.pool.apply_async(train_step, args=(data, *args))
 
-    def calc_fitness(self, criterion=mse):
+        # Todo .get() if ApplyResult
+
+
+    def score_fitness(self):
+        max_score = max(self.results.values())
+        min_score = min(self.results.values())
+        if self.goal == 'min':
+            # convert from lowest-is-best to highest-is-best
+            conv = lambda score: - (score - max_score) / (max_score - min_score)
+        else:
+            conv = lambda score: (score - min_score) / (max_score - min_score)
+
         for model in self.population:
-            result = self.results[dna2str(model.dna)]
-            if not isinstance(self.results[dna2str(model.dna)], (pd.Series, pd.DataFrame)):
-                result = result.get()
-
-            model.fitness = criterion(self.y_train, self.results[dna2str(model.dna)])
+            model.score = self.results[model.dna]
+            model.fitness = conv(self.results[model.dna])
 
 
-    def run(self, criterion):
+    def run(self):
         for gen in range(self.generations):
             if gen == 0:
                 self.populate_init(gen)
             else:
                 self.populate_next()
-            self.train_population(self.X_train)
-            self.calc_fitness(criterion)
+            self.learn(self.X_train)
+            self.score_fitness()
 
-        if criterion == 'MSE':
-            return min(self.population)
+        # score is converted into fitness, which always follows highest-is-best
+        return max(self.populaiton)
 
 
 class Model:
 
     def __init__(self, dna=None):
         self.dna = dna
+        self.score = 0
         self.fitness = 0
 
     def __lt__(self, other):
@@ -199,6 +213,9 @@ if __name__ == '__main__':
     def add_cols(data, useless_variable):
         return data.sum(axis=1)
 
+    def score(data, y):
+        return mse(data, y)
+
     p = Pool(2)
     mt = ModelTuner(p, df, 'y')
     mt.add_step(
@@ -221,7 +238,15 @@ if __name__ == '__main__':
         }
     )
 
-    result = mt.run(mse)
+    mt.add_step(
+        {
+            'name': 'MSE',
+            'func': score,
+            'args': [df['y']]
+        }
+    )
+
+    result = mt.run()
     print(result)
 
 
