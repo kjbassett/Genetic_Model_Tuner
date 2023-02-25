@@ -41,7 +41,7 @@ class ModelTuner:
         }
         """
 
-        step['func'] = partial(step_await, step['func'])
+        #step['func'] = partial(step_await, step['func'])
         self.steps.append(step)
 
     def populate_init(self, generation):
@@ -88,37 +88,42 @@ class ModelTuner:
         self.population = new_pop
 
     def learn(self, data):
-        self.results = {'': data}
+        self.results = {-1: {'': data}}
         for i, train_step in enumerate(self.steps):
+            self.results[i] = dict()
+            # Start all processes for this section of dna on all models
             for model in self.population:
                 prev_dna = dna2str(model.dna[:i])
                 current_dna = dna2str(model.dna[:i+1])
 
                 # check if result of model with identical development up until this stage has already been calculated
-                if dna2str(current_dna) in self.results.keys():
+                if current_dna in self.results[i].keys():
                     continue
 
                 # get data with matching genes from previous stage of development and apply function + args of next gene
                 args = model.dna[i]
-                data = self.results[prev_dna]
-                self.results[current_dna] = self.pool.apply_async(train_step, args=(data, *args))
+                data = self.results[i-1][prev_dna]
+                self.results[i][current_dna] = self.pool.apply_async(train_step['func'], args=(data, *args))
 
-        # Todo .get() if ApplyResult
-
+            # Wait for all processes for this section of dna to complete
+            for dna, data in self.results[i].items():
+                if isinstance(data, mp.pool.ApplyResult):
+                    self.results[i][dna] = data.get()
 
     def score_fitness(self):
-        max_score = max(self.results.values())
-        min_score = min(self.results.values())
+        n_genes = len(self.steps)
+        max_score = max(self.results[n_genes-1].values())
+        min_score = min(self.results[n_genes-1].values())
         if self.goal == 'min':
             # convert from lowest-is-best to highest-is-best
-            conv = lambda score: - (score - max_score) / (max_score - min_score)
+            def conv(score): return - (score - max_score) / (max_score - min_score)
         else:
-            conv = lambda score: (score - min_score) / (max_score - min_score)
+            def conv(score): return (score - min_score) / (max_score - min_score)
 
         for model in self.population:
-            model.score = self.results[model.dna]
-            model.fitness = conv(self.results[model.dna])
-
+            dna = dna2str(model.dna)
+            model.score = self.results[n_genes-1][dna]
+            model.fitness = conv(self.results[n_genes-1][dna])
 
     def run(self):
         for gen in range(self.generations):
@@ -130,7 +135,7 @@ class ModelTuner:
             self.score_fitness()
 
         # score is converted into fitness, which always follows highest-is-best
-        return max(self.populaiton)
+        return max(self.population)
 
 
 class Model:
@@ -144,7 +149,7 @@ class Model:
         return self.fitness < other.fitness
 
     def __eq__(self, other):
-        return dna2str(self.dna) == other.dna2str()
+        return dna2str(self.dna) == dna2str(other.dna)
 
     def __hash__(self):
         return hash(dna2str(self.dna))
@@ -163,7 +168,10 @@ def dna2str(dna):
     dna_str = ''
     for gene in dna:
         for nucleotide in gene:
-            dna_str += str(nucleotide) + '|'
+            if isinstance(nucleotide, pd.Series):
+                dna_str += nucleotide.name + '|'
+            else:
+                dna_str += str(nucleotide) + '|'
         dna_str += '//'
     return dna_str
 
@@ -201,23 +209,23 @@ def mutate(model, framework, prob, max_mag):
     return model
 
 
+# below functions are for testing purposes
+
+
+def do_nothing(data, n):
+    return data
+
+
+def add_cols(data, useless_variable):
+    return data.sum(axis=1)
+
+
 if __name__ == '__main__':
-    from multiprocessing import Pool
     df = pd.DataFrame({'a': [0, 0, 0, 0, 1, 1, 1, 1],
                        'b': [0, 0, 0, 0, 0, 0, 1, 1],
                        'y': [0, 0, 0, 0, 1, 1, 2, 2]})
 
-    def do_nothing(data, n):
-        return data
-
-    def add_cols(data, useless_variable):
-        return data.sum(axis=1)
-
-    def score(data, y):
-        return mse(data, y)
-
-    p = Pool(2)
-    mt = ModelTuner(p, df, 'y')
+    mt = ModelTuner(None, df, 'y')
     mt.add_step(
         {
             'name': 'do_nothing',
@@ -241,13 +249,15 @@ if __name__ == '__main__':
     mt.add_step(
         {
             'name': 'MSE',
-            'func': score,
-            'args': [df['y']]
+            'func': mse,
+            'args': [
+                [df['y']]
+            ]
         }
     )
 
     result = mt.run()
-    print(result)
+    print(dna2str(result.dna), result.score, result.fitness)
 
 
 """
