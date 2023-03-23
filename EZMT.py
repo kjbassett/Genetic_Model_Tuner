@@ -2,8 +2,7 @@ from functools import partial
 import pandas as pd
 from random import choice, uniform, random, randint
 import multiprocessing as mp
-from sklearn.metrics import mean_squared_error as mse
-from sklearn.model_selection import StratifiedShuffleSplit
+from sklearn.model_selection import StratifiedKFold
 
 
 class ModelTuner:
@@ -15,38 +14,53 @@ class ModelTuner:
         else:
             self.pool = pool
 
-        # Todo actually split this better. Stratified with samples = generations?
-        train, test = data, data
-        self.X_train, self.y_train = train.drop(columns=y_col), train[y_col]
-        self.X_test, self.y_test = test.drop(columns=y_col), test[y_col]
-
+        self.data_fold_generator = generate_stratified_folds(data, generations, y_col)
 
         self.steps = []
         self.generations = generations
-        self.population = [Model([]) for i in range(pop_size)]
+        self.population = [Model([]) for _ in range(pop_size)]
         self.goal = goal
-        self.results = dict()
 
-    def add_step(self, step):
+    def add_step(self, func, inputs, outputs=None, *args, name=None):
         """
-        Add a step to the skeleton
-        :param step:
-        {
-            name: some_name0
-            func: some_func0,
-            args: [
-                [arg0_0_0, arg0_0_1],     <- Possible choices for first argument of first step in model
-                [arg0_1_0, arg0_1_1]      <- Possible choices for second argument of first step in model
+        Add step to skeleton (self.steps)
+        :param func:
+        :param inputs: names of the keys whose values must be retrieved from state.
+                        Will be supplied to func in the order that they are listed
+        :param outputs: names of the keys that will hold the outputs in state.
+                        Must be the same length and order as outputs of func
+        :param args: [
+                [arg0_0_0, arg0_0_1],    <- Possible choices for first argument after input args of first step in model
+                [arg0_1_0, arg0_1_1]     <- Possible choices for second argument after input args of first step in model
             ]
-        }
+        :param name: name of the function, if None, func.__name__
+        :return: None
         """
 
-        #step['func'] = partial(step_await, step['func'])
+        if name is None:
+            name = func if isinstance(func, str) else func.__name__
+        if outputs is None:
+            outputs = []
+        elif isinstance(outputs, str):
+            outputs = [outputs]
+        if inputs is None:
+            inputs = []
+        elif isinstance(inputs, str):
+            inputs = [inputs]
+
+        step = {
+            'name': name,
+            'func': func,
+            'inputs': inputs,
+            'args': args,
+            'outputs': outputs
+        }
+
         self.steps.append(step)
 
     def populate_init(self, generation):
         """
-        Generates a population by iterating through genes slots and randomly choosing pop_size# genes with replacement.
+        Generates a population by iterating through genes slots and randomly choosing genes.
         In other words, generate each population member's first gene, then do everyone's second, etc
         """
         # Generate initial population
@@ -74,7 +88,7 @@ class ModelTuner:
         new_pop = self.population[0:elitism]
 
         survivors = natural_selection(self.population)
-        survivors = list(set([*survivors, *new_pop]))
+        survivors = list({*survivors, *new_pop})
 
         for _ in range(len(self.population) - elitism):
             if reproduction == 'asexual':
@@ -87,43 +101,98 @@ class ModelTuner:
             new_pop.append(child)
         self.population = new_pop
 
-    def learn(self, data):
-        self.results = {-1: {'': data}}
+    def learn(self, state):
+        prev_results = {'': state}
         for i, train_step in enumerate(self.steps):
-            self.results[i] = dict()
+            print('Experiencing ' + train_step['name'])
+            results = dict()
+
+            counter = 0
             # Start all processes for this section of dna on all models
-            for model in self.population:
-                prev_dna = dna2str(model.dna[:i])
+            for m, model in enumerate(self.population):
+                print(m)
                 current_dna = dna2str(model.dna[:i+1])
 
                 # check if result of model with identical development up until this stage has already been calculated
-                if current_dna in self.results[i].keys():
+                if current_dna in results.keys():
                     continue
 
-                # get data with matching genes from previous stage of development and apply function + args of next gene
-                args = model.dna[i]
-                data = self.results[i-1][prev_dna]
-                self.results[i][current_dna] = self.pool.apply_async(train_step['func'], args=(data, *args))
+                counter += 1
 
-            # Wait for all processes for this section of dna to complete
-            for dna, data in self.results[i].items():
-                if isinstance(data, mp.pool.ApplyResult):
-                    self.results[i][dna] = data.get()
+                prev_dna = dna2str(model.dna[:i])
+                # state is a dict of that hold all the saved outputs from previous steps for later use
+                state = dict(prev_results[prev_dna])  # Must wrap in dict to make a copy
+                results[current_dna] = self.pool.apply_async(self.perform_step, args=(i, model, state, train_step))
 
-    def score_fitness(self):
-        n_genes = len(self.steps)
-        max_score = max(self.results[n_genes-1].values())
-        min_score = min(self.results[n_genes-1].values())
-        if self.goal == 'min':
-            # convert from lowest-is-best to highest-is-best
-            def conv(score): return - (score - max_score) / (max_score - min_score)
+            print('Started ' + str(counter) + ' processes')
+            # Wait for all processes from this section of dna to complete
+            for dna, output in results.items():
+                if isinstance(output, mp.pool.ApplyResult):
+                    results[dna] = output.get()
+
+            prev_results = results
+
+        return results
+
+    # @staticmethod
+    # def prepare_step(i, model, state, train_step):
+    #     if isinstance(train_step['func'], str):
+    #         f_parts = train_step['func'].split('.')
+    #         func = state[f_parts[0]]
+    #         for part in f_parts:
+    #             if hasattr(func, part):
+    #                 func = getattr(func, part)
+    #             else:
+    #                 raise Exception('Could not get ' + train_step['func'] + ' from state')
+    #     else:
+    #         func = train_step['func']
+    #     # get data with matching genes from previous stage of development and apply function + args of next gene
+    #     args = (*[state[inp] for inp in train_step['inputs']], *model.dna[i])
+    #     return partial(func, args)
+
+    @staticmethod
+    def perform_step(i, model, state, train_step):
+        if isinstance(train_step['func'], str):
+            f_parts = train_step['func'].split('.')
+            func = state[f_parts[0]]
+            for part in f_parts:
+                if hasattr(func, part):
+                    func = getattr(func, part)
+                else:
+                    raise Exception('Could not get ' + train_step['func'] + ' from state')
         else:
-            def conv(score): return (score - min_score) / (max_score - min_score)
+            func = train_step['func']
+        # get data with matching genes from previous stage of development and apply function + args of next gene
+        args = (*[state[inp] for inp in train_step['inputs']], *model.dna[i])
+        output = func(*args)
+
+        # if last step, just return the result (which should just be a score)
+        if i >= len(model.dna) - 1:
+            return output
+
+        # Update State
+        ons = train_step['outputs']  # output names
+        if ons:
+            if len(ons) > 1:
+                output = {o: output[j] for j, o in enumerate(ons)}
+            elif len(ons) == 1:
+                output = {o: output for o in ons}
+            state = {**state, **output}
+
+        return state
+
+    def score_fitness(self, results):
+        if self.goal == 'min':
+            worst = max(results.values())
+            best = min(results.values())
+        else:
+            best = max(results.values())
+            worst = min(results.values())
 
         for model in self.population:
             dna = dna2str(model.dna)
-            model.score = self.results[n_genes-1][dna]
-            model.fitness = conv(self.results[n_genes-1][dna])
+            model.score = results[dna]
+            model.fitness = (results[dna] - worst) / (best - worst)
 
     def run(self):
         for gen in range(self.generations):
@@ -131,11 +200,18 @@ class ModelTuner:
                 self.populate_init(gen)
             else:
                 self.populate_next()
-            self.learn(self.X_train)
-            self.score_fitness()
+
+            # Get next fold of data for next generation
+            x_train, x_test, y_train, y_test = next(self.data_fold_generator)
+            results = self.learn(
+                {'x_train': x_train, 'x_test': x_test, 'y_train': y_train}
+            )
+            
+            self.score_fitness(results)
 
         # score is converted into fitness, which always follows highest-is-best
         return max(self.population)
+
 
 
 class Model:
@@ -176,13 +252,6 @@ def dna2str(dna):
     return dna_str
 
 
-# Assume if not pd.DataFrame, then it's a pool.apply_async still running
-def step_await(func, data, *args):
-    if not isinstance(data, pd.DataFrame):
-        data = data.get()
-    return func(data, *args)
-
-
 def natural_selection(
         population,
         selection_method='weighted_prob',
@@ -209,6 +278,17 @@ def mutate(model, framework, prob, max_mag):
     return model
 
 
+def generate_stratified_folds(data, n_splits, y_col):
+    X = data.drop(y_col, axis=1)
+    y = data[y_col]
+    skf = StratifiedKFold(n_splits=n_splits)
+    for train_idx, test_idx in skf.split(X, y):
+        X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+        y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
+        yield X_train, X_test, y_train, y_test
+
+
+
 # below functions are for testing purposes
 
 
@@ -221,6 +301,7 @@ def add_cols(data, useless_variable):
 
 
 if __name__ == '__main__':
+    from sklearn.metrics import mean_squared_error as mse
     df = pd.DataFrame({'a': [0, 0, 0, 0, 1, 1, 1, 1],
                        'b': [0, 0, 0, 0, 0, 0, 1, 1],
                        'y': [0, 0, 0, 0, 1, 1, 2, 2]})
@@ -242,16 +323,6 @@ if __name__ == '__main__':
             'func': add_cols,
             'args': [
                 ['ooga', 'booga', 'elephant', 'preposterous', 'waka waka', 'bbb']
-            ]
-        }
-    )
-
-    mt.add_step(
-        {
-            'name': 'MSE',
-            'func': mse,
-            'args': [
-                [df['y']]
             ]
         }
     )
@@ -298,6 +369,7 @@ step 5. If running multiple generations
                 according to some function of their performance scores
 
 Future TODO:
+    Make ability to add steps before splitting data for ease of use with new data
     let functions change
     let there be nucleotides that represent continuous variables
     let mutation magnitude adjust during the run

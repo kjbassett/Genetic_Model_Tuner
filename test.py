@@ -1,16 +1,19 @@
 import pandas as pd
+
 from EZMT import ModelTuner
 import sys
 from sklearn.preprocessing import LabelEncoder
 from sklearn.preprocessing import OneHotEncoder
 import numpy as np
+from sklearn.experimental import enable_iterative_imputer
+from sklearn.impute import IterativeImputer
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error as mse
+
+from multiprocessing import freeze_support
 
 sys.path.append('C:\\Users\\Ken\\Dropbox\\Programming\\EZ-Neural-Net')
 from EZNN import create_model
-
-#df = pd.read_csv('G:\\Programming\\mushroom.csv')
-
-mt = ModelTuner(None, df, 'class', generations=5, pop_size=20, goal='min')
 
 
 def simulate_missing_data(data, chance):
@@ -33,23 +36,58 @@ def simulate_missing_data(data, chance):
     return df_miss
 
 
-def ordinal_encode(data, columns=None):
-    if columns is None:
-        columns = data.columns
-
-    label_encoders = dict()
-    for col in columns:
-        le = LabelEncoder()
-        le.fit(data[col].unique())
-        label_encoders[col] = le  # Save the label encoder to decode later
-        data[col] = le.transform(data[col])
-    return data
+def gen_imputer(x_train, max_iter, tol, estimator):
+    imputer = IterativeImputer(max_iter=max_iter, tol=tol, random_state=42, estimator=estimator(), verbose=True)
+    imputer.fit(x_train)
+    return imputer
 
 
-def one_hot_encode(data, cols):
+def MICE(x_train, x_test):
+    imputer = IterativeImputer(max_iter=7, tol=0.1, random_state=42, estimator=RandomForestRegressor(), verbose=True)
+    imputer.fit(x_train)
+    x_train = imputer.transform(x_train)
+    x_test = imputer.transform(x_test)
+    return x_train, x_test
+
+
+def ord_transform(encoder, values):
+    try:
+        return encoder.transform(values)
+    except ValueError:
+        if hasattr(encoder, 'classes_'):
+            encoder.fit(np.append(encoder.classes_, values))
+        else:
+            encoder.fit(values)
+        return ord_transform(encoder, values)
+
+
+def ordinal_encode(data, cols=None, encoders=None):
+    if cols is None:
+        cols = [col for col in data.columns if data[col].dtype == 'object']
+    elif isinstance(cols, str):
+        cols = [cols]
+    if encoders is None:
+        encoders = {}
+
+    for col in cols:
+        if col in encoders:
+            le = encoders[col]
+        else:
+            le = LabelEncoder()
+        data[col] = ord_transform(le, data[col])
+        print('Are the mapping being updated in this scope or only in ord_transform?')
+        encoders[col] = le  # Save the label encoder to decode later
+    return data, encoders
+
+
+def one_hot_encode(data, cols=None):
+    if cols is None:
+        cols = [col for col in data.columns if data[col].dtype == 'object']
+    elif isinstance(cols, str):
+        cols = [cols]
     encoders = {}
     for col in cols:
-        encoder = OneHotEncoder(sparse=False)
+        encoder = OneHotEncoder(sparse_output=False)
         encoded = encoder.fit_transform(data[[col]])
         encoders[col] = encoder
         new_cols = [f"{col}_{cat}" for cat in encoder.categories_[0]]
@@ -58,9 +96,71 @@ def one_hot_encode(data, cols):
     return data, encoders
 
 
-def one_hot(data, columns=None):
-    # don't do numerical columns
-    pass
+def oh_v_or(data, *args, cols=None):
+    if cols is None:
+        cols = [col for col in data.columns if data[col].dtype == 'object']
+    elif isinstance(cols, str):
+        cols = [cols]
+
+    if len(args) != len(cols):
+        raise Exception('args must same same length as cols')
+
+    encoders = {}
+    for i, col in enumerate(cols):
+        if args[i]:  # 1
+            _ = ordinal_encode(data, col)
+        else:
+            _ = one_hot_encode(data, col)
+
+        data = _[0]
+        encoders[col] = _[1][col]
+
+    return data, encoders
+
+
+def main():
+    freeze_support()
+
+    df = pd.read_csv('G:\\Programming\\mushroom.csv')
+    df, encoders = oh_v_or(df, *[1 if col == 'class' else 0 for col in df.columns])
+
+    print(df)
+
+    mt = ModelTuner(None, df, 'class', generations=5, pop_size=20, goal='min')
+    nn = create_model([10, 3, 1])
+
+    # add_step: self, func, inputs, outputs=None, *args, name=None
+    # mt.add_step(one_hot_encode, 'x_train', ['x_train', 'encoders'], *[[0, 1] for _ in range(len(df.columns) - 1)])
+    mt.add_step(simulate_missing_data, 'x_train', 'x_train', [i / 100 for i in range(10)])
+    mt.add_step(simulate_missing_data, 'x_test', 'x_test', [i / 100 for i in range(10)])
+    mt.add_step(MICE, ['x_train', 'x_test'], ['x_train', 'x_test'])
+    mt.add_step(create_model, ['x_train', 'y_train'], 'model')
+    mt.add_step('model.predict', 'x_test', 'test_pred')
+
+     # TODO handle strings as funcs to reference items in state
+    mt.add_step(mse, ['test_pred', 'y_test'])
+
+    results = mt.run()
+
+if __name__ == '__main__':
+    main()
+
+    """
+    
+    
+    """
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
