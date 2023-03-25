@@ -16,12 +16,12 @@ class ModelTuner:
 
         self.data_fold_generator = generate_stratified_folds(data, generations, y_col)
 
-        self.steps = []
+        self.decision_points = []
         self.generations = generations
-        self.population = [Model([]) for _ in range(pop_size)]
+        self.population = [Organism([]) for _ in range(pop_size)]
         self.goal = goal
 
-    def add_step(self, func, inputs, outputs=None, *args, name=None):
+    def add_decision_point(self, func, name=None, inputs=None, outputs=None, args=None):
         """
         Add step to skeleton (self.steps)
         :param func:
@@ -31,7 +31,7 @@ class ModelTuner:
                         Must be the same length and order as outputs of func
         :param args: [
                 [arg0_0_0, arg0_0_1],    <- Possible choices for first argument after input args of first step in model
-                [arg0_1_0, arg0_1_1]     <- Possible choices for second argument after input args of first step in model
+                (arg0_1_0, arg0_1_1)     <- Range of choices for second argument after input args of first step in model
             ]
         :param name: name of the function, if None, func.__name__
         :return: None
@@ -47,8 +47,10 @@ class ModelTuner:
             inputs = []
         elif isinstance(inputs, str):
             inputs = [inputs]
+        if args is None:
+            args = []
 
-        step = {
+        decision_point = {
             'name': name,
             'func': func,
             'inputs': inputs,
@@ -56,7 +58,7 @@ class ModelTuner:
             'outputs': outputs
         }
 
-        self.steps.append(step)
+        self.decision_points.append(decision_point)
 
     def populate_init(self, generation):
         """
@@ -64,10 +66,10 @@ class ModelTuner:
         In other words, generate each population member's first gene, then do everyone's second, etc
         """
         # Generate initial population
-        print(self.steps)
+        print(self.decision_points)
         if generation == 0:
-            for step in self.steps:
-                # One gene corresponds to one function in the chain of steps
+            for step in self.decision_points:
+                # One gene in the DNA corresponds to one decision function in the chain of decisions
                 for i in range(len(self.population)):
                     gene = []
                     for nuc_options in step['args']:
@@ -76,7 +78,7 @@ class ModelTuner:
                         gene.append(choice(nuc_options))
                     self.population[i].add_gene(gene)
 
-    def populate_next(
+    def select_and_reproduce(
             self,
             elitism=0,
             nuc_change_chance=0.1,
@@ -87,9 +89,11 @@ class ModelTuner:
         self.population = sorted(self.population, reverse=True)
         new_pop = self.population[0:elitism]
 
+        # Determine who survives
         survivors = natural_selection(self.population)
         survivors = list({*survivors, *new_pop})
 
+        # Reproduce the population
         for _ in range(len(self.population) - elitism):
             if reproduction == 'asexual':
                 child = choice(survivors)
@@ -97,61 +101,46 @@ class ModelTuner:
                 parent1 = choice(survivors)
                 parent2 = choice(survivors)
                 child = parent1.mate(parent2)
-            child = mutate(child, self.steps, nuc_change_chance, 1)
+            child = mutate(child, self.decision_points, nuc_change_chance, 1)
             new_pop.append(child)
         self.population = new_pop
 
-    def learn(self, state):
-        prev_results = {'': state}
-        for i, train_step in enumerate(self.steps):
-            print('Experiencing ' + train_step['name'])
-            results = dict()
+    def experience_population(self, state):
+        prev_combinations = {'': state}
+        for i, train_step in enumerate(self.decision_points):
+            print('Processing all unique combinations of options for decision: ' + train_step['name'])
+            unique_combinations = dict()
 
             counter = 0
-            # Start all processes for this section of dna on all models
+            # Start all processes for this section of dna. Only process unique decisions based on populations' dnas
             for m, model in enumerate(self.population):
                 print(m)
                 current_dna = dna2str(model.dna[:i+1])
 
-                # check if result of model with identical development up until this stage has already been calculated
-                if current_dna in results.keys():
+                # check if identical series of decisions up until this stage has already started calculating
+                if current_dna in unique_combinations.keys():
                     continue
 
                 counter += 1
 
                 prev_dna = dna2str(model.dna[:i])
                 # state is a dict of that hold all the saved outputs from previous steps for later use
-                state = dict(prev_results[prev_dna])  # Must wrap in dict to make a copy
-                results[current_dna] = self.pool.apply_async(self.perform_step, args=(i, model, state, train_step))
+                state = dict(prev_combinations[prev_dna])  # Must wrap in dict to make a copy
+                unique_combinations[current_dna] = self.pool.apply_async(self.make_decision, args=(i, model, state, train_step))
 
             print('Started ' + str(counter) + ' processes')
+            
             # Wait for all processes from this section of dna to complete
-            for dna, output in results.items():
+            for dna, output in unique_combinations.items():
                 if isinstance(output, mp.pool.ApplyResult):
-                    results[dna] = output.get()
+                    unique_combinations[dna] = output.get()
 
-            prev_results = results
+            prev_combinations = unique_combinations
 
-        return results
-
-    # @staticmethod
-    # def prepare_step(i, model, state, train_step):
-    #     if isinstance(train_step['func'], str):
-    #         f_parts = train_step['func'].split('.')
-    #         func = state[f_parts[0]]
-    #         for part in f_parts:
-    #             if hasattr(func, part):
-    #                 func = getattr(func, part)
-    #             else:
-    #                 raise Exception('Could not get ' + train_step['func'] + ' from state')
-    #     else:
-    #         func = train_step['func']
-    #     # get data with matching genes from previous stage of development and apply function + args of next gene
-    #     args = (*[state[inp] for inp in train_step['inputs']], *model.dna[i])
-    #     return partial(func, args)
+        return unique_combinations
 
     @staticmethod
-    def perform_step(i, model, state, train_step):
+    def make_decision(i, model, state, train_step):
         if isinstance(train_step['func'], str):
             f_parts = train_step['func'].split('.')
             func = state[f_parts[0]]
@@ -199,11 +188,11 @@ class ModelTuner:
             if gen == 0:
                 self.populate_init(gen)
             else:
-                self.populate_next()
+                self.select_and_reproduce()
 
             # Get next fold of data for next generation
             x_train, x_test, y_train, y_test = next(self.data_fold_generator)
-            results = self.learn(
+            results = self.experience_population(
                 {'x_train': x_train, 'x_test': x_test, 'y_train': y_train}
             )
             
@@ -213,8 +202,7 @@ class ModelTuner:
         return max(self.population)
 
 
-
-class Model:
+class Organism:
 
     def __init__(self, dna=None):
         self.dna = dna
@@ -266,69 +254,27 @@ def natural_selection(
         ]
 
 
-def mutate(model, framework, prob, max_mag):
-    # framework provides possible mutations of model
+def mutate(organism, framework, prob, max_mag):
+    # framework = decision points. Remember a gene determines a decision
+    # framework provide possible mutations of organism's genes
     # Until nucleotides can represent continuous variables, max_mag is positions from the current nucleotide's value
     for i in range(len(framework)):
-        for j, nucleotide in enumerate(model.dna[i]):
+        for j, nucleotide in enumerate(organism.dna[i]):
             if random() < prob:
                 index = framework[i]['args'][j].index(nucleotide) + randint(-max_mag, max_mag)
                 index = min(0, max(len(framework[i]['args'][j]) - 1, index))
-                model.dna[i][j] = framework[i]['args'][j][index]
-    return model
+                organism.dna[i][j] = framework[i]['args'][j][index]
+    return organism
 
 
 def generate_stratified_folds(data, n_splits, y_col):
-    X = data.drop(y_col, axis=1)
+    x = data.drop(y_col, axis=1)
     y = data[y_col]
     skf = StratifiedKFold(n_splits=n_splits)
-    for train_idx, test_idx in skf.split(X, y):
-        X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+    for train_idx, test_idx in skf.split(x, y):
+        x_train, x_test = x.iloc[train_idx], x.iloc[test_idx]
         y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
-        yield X_train, X_test, y_train, y_test
-
-
-
-# below functions are for testing purposes
-
-
-def do_nothing(data, n):
-    return data
-
-
-def add_cols(data, useless_variable):
-    return data.sum(axis=1)
-
-
-if __name__ == '__main__':
-    from sklearn.metrics import mean_squared_error as mse
-    df = pd.DataFrame({'a': [0, 0, 0, 0, 1, 1, 1, 1],
-                       'b': [0, 0, 0, 0, 0, 0, 1, 1],
-                       'y': [0, 0, 0, 0, 1, 1, 2, 2]})
-
-    mt = ModelTuner(None, df, 'y')
-    mt.add_step(
-        {
-            'name': 'do_nothing',
-            'func': do_nothing,
-            'args': [
-                [0, 1, 2, 3, 4, 5]
-            ]
-        }
-    )
-
-    mt.add_step(
-        {
-            'name': 'add_cols',
-            'func': add_cols,
-            'args': [
-                ['ooga', 'booga', 'elephant', 'preposterous', 'waka waka', 'bbb']
-            ]
-        }
-    )
-
-    result = mt.run()
-    print(dna2str(result.dna), result.score, result.fitness)
+        yield x_train, x_test, y_train, y_test
 
 
 """
@@ -338,16 +284,16 @@ step 1. Build skeleton of model with the following structure:
             name: some_name0
             func: some_func0,
             args: [
-                [arg0_0_0, arg0_0_1],     <- Possible choices for first argument of first step in model
-                [arg0_1_0, arg0_1_1]      <- Possible choices for second argument of first step in model
+                [arg0_0_0, arg0_0_1],     <- Possible choices for first argument of first step in model (list)
+                (arg0_1_min, arg0_1_max)  <- Range of choices for second argument of first step in model (tuple)
             ]
         }, 
         {                                   <- Second step starts
             name: some_name1
             func: some_func1
             args: [
-                [arg1_0_0, arg1_0_1],     <- Possible choices for first argument of second step in model
-                [arg1_1_0, arg1_1_1]      <- Possible choices for second argument of second step in model
+                (arg1_0_min, arg1_0_max), <- Range of choices for first argument of second step in model (tuple)
+                [arg1_1_0, arg1_1_1]      <- Possible choices for second argument of second step in model (list)
             ]
         }
     ]

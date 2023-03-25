@@ -126,41 +126,22 @@ def main():
 
     print(df)
 
-    mt = ModelTuner(None, df, 'class', generations=5, pop_size=20, goal='min')
+    mt = ModelTuner(None, df, 'class', generations=5, pop_size=4, goal='min')
     nn = create_model([10, 3, 1])
 
     # add_step: self, func, inputs, outputs=None, *args, name=None
     # mt.add_step(one_hot_encode, 'x_train', ['x_train', 'encoders'], *[[0, 1] for _ in range(len(df.columns) - 1)])
-    mt.add_step(simulate_missing_data, 'x_train', 'x_train', [i / 100 for i in range(10)])
-    mt.add_step(simulate_missing_data, 'x_test', 'x_test', [i / 100 for i in range(10)])
-    mt.add_step(MICE, ['x_train', 'x_test'], ['x_train', 'x_test'])
-    mt.add_step(create_model, ['x_train', 'y_train'], 'model')
-    mt.add_step('model.predict', 'x_test', 'test_pred')
+    mt.add_decision_point(simulate_missing_data, 'x_train', 'x_train', [i / 100 for i in range(10)])
+    mt.add_decision_point(simulate_missing_data, 'x_test', 'x_test', [i / 100 for i in range(10)])
+    mt.add_decision_point(MICE, ['x_train', 'x_test'], ['x_train', 'x_test'])
+    mt.add_decision_point(create_model, ['x_train', 'y_train'], 'model')
+    mt.add_decision_point('model.predict', 'x_test', 'test_pred')
 
-     # TODO handle strings as funcs to reference items in state
-    mt.add_step(mse, ['test_pred', 'y_test'])
+    # TODO handle strings as funcs to reference items in state
+    mt.add_decision_point(mse, ['test_pred', 'y_test'])
 
     results = mt.run()
 
 if __name__ == '__main__':
     main()
-
-    """
-    
-    
-    """
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
