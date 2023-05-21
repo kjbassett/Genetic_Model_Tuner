@@ -1,8 +1,11 @@
-from functools import partial
-import pandas as pd
-from random import choice, uniform, random, randint
+import numpy as np
+import random
 import multiprocessing as mp
 from sklearn.model_selection import StratifiedKFold
+import pprint
+import time
+
+pp = pprint.PrettyPrinter(indent=4)
 
 
 class ModelTuner:
@@ -60,23 +63,25 @@ class ModelTuner:
 
         self.decision_points.append(decision_point)
 
-    def populate_init(self, generation):
+    def populate_init(self):
         """
-        Generates a population by iterating through genes slots and randomly choosing genes.
+        Generates a population by iterating through gene slots and randomly choosing genes.
         In other words, generate each population member's first gene, then do everyone's second, etc
         """
         # Generate initial population
-        print(self.decision_points)
-        if generation == 0:
-            for step in self.decision_points:
-                # One gene in the DNA corresponds to one decision function in the chain of decisions
-                for i in range(len(self.population)):
-                    gene = []
-                    for nuc_options in step['args']:
-                        # One nucleotide corresponds to one argument.
-                        # One of multiple options (e.g. A, C, G, T) is chosen
-                        gene.append(choice(nuc_options))
-                    self.population[i].add_gene(gene)
+        pp.pprint(self.decision_points)
+        for dp in self.decision_points:
+            # One gene in the DNA corresponds to one decision function in the chain of decisions
+            for i in range(len(self.population)):
+                gene = []
+                for nuc_options in dp['args']:
+                    # One nucleotide corresponds to one argument.
+                    # One of multiple options (e.g. A, C, G, T) is chosen
+                    if isinstance(nuc_options, list):  # discrete options
+                        gene.append(random.choice(nuc_options))
+                    if isinstance(nuc_options, tuple):  # continuous options
+                        gene.append(round(random.uniform(nuc_options[0], nuc_options[1]), 5))
+                self.population[i].add_gene(gene)
 
     def select_and_reproduce(
             self,
@@ -96,68 +101,73 @@ class ModelTuner:
         # Reproduce the population
         for _ in range(len(self.population) - elitism):
             if reproduction == 'asexual':
-                child = choice(survivors)
+                child = random.choice(survivors)
             elif reproduction == 'sexual':
-                parent1 = choice(survivors)
-                parent2 = choice(survivors)
+                parent1, parent2 = random.sample(survivors, 2)
                 child = parent1.mate(parent2)
-            child = mutate(child, self.decision_points, nuc_change_chance, 1)
+            child = mutate(child, self.decision_points, nuc_change_chance, 1, 0.5)
             new_pop.append(child)
         self.population = new_pop
 
     def experience_population(self, state):
-        prev_combinations = {'': state}
+        # Just as we experience the universe, the universe experiences us
+        # for each decision point, process only unique chains of decisions + args from first decision point to current
+
+        unique_organisms = {'': state}
+
         for i, train_step in enumerate(self.decision_points):
             print('Processing all unique combinations of options for decision: ' + train_step['name'])
-            unique_combinations = dict()
 
             counter = 0
-            # Start all processes for this section of dna. Only process unique decisions based on populations' dnas
-            for m, model in enumerate(self.population):
-                print(m)
+            prev_unique = unique_organisms
+            unique_organisms = dict()
+            # Start all processes for this section of DNA. Only process unique decisions based on populations' DNAs
+            for model in self.population:
                 current_dna = dna2str(model.dna[:i+1])
 
                 # check if identical series of decisions up until this stage has already started calculating
-                if current_dna in unique_combinations.keys():
+                if current_dna in unique_organisms.keys():
                     continue
 
                 counter += 1
 
                 prev_dna = dna2str(model.dna[:i])
                 # state is a dict of that hold all the saved outputs from previous steps for later use
-                state = dict(prev_combinations[prev_dna])  # Must wrap in dict to make a copy
-                unique_combinations[current_dna] = self.pool.apply_async(self.make_decision, args=(i, model, state, train_step))
-
-            print('Started ' + str(counter) + ' processes')
+                try:
+                    state = dict(prev_unique[prev_dna])  # Must wrap in dict to make a copy
+                except KeyError:
+                    quit()
+                unique_organisms[current_dna] = self.pool.apply_async(
+                    self.make_decision,
+                    args=(i, model, state, train_step)
+                )
             
-            # Wait for all processes from this section of dna to complete
-            for dna, output in unique_combinations.items():
+            # Wait for all processes for this decision point to complete
+            for dna, output in unique_organisms.items():
                 if isinstance(output, mp.pool.ApplyResult):
-                    unique_combinations[dna] = output.get()
+                    unique_organisms[dna] = output.get()
 
-            prev_combinations = unique_combinations
+        # Each organism "remembers" what it has processed
+        for organism in self.population:
+            organism.knowledge = unique_organisms[dna2str(organism.dna)]
 
-        return unique_combinations
+        return unique_organisms
 
     @staticmethod
-    def make_decision(i, model, state, train_step):
+    def make_decision(i, organism, state, train_step):
         if isinstance(train_step['func'], str):
             f_parts = train_step['func'].split('.')
             func = state[f_parts[0]]
-            for part in f_parts:
+            for part in f_parts[1:]:
                 if hasattr(func, part):
                     func = getattr(func, part)
                 else:
-                    raise Exception('Could not get ' + train_step['func'] + ' from state')
+                    raise Exception('Could not get ' + part + ' from ' + train_step['func'])
         else:
             func = train_step['func']
         # get data with matching genes from previous stage of development and apply function + args of next gene
-        args = (*[state[inp] for inp in train_step['inputs']], *model.dna[i])
+        args = (*[state[inp] for inp in train_step['inputs']], *organism.dna[i])
         output = func(*args)
-
-        # if last step, just return the result (which should just be a score)
-        if i >= len(model.dna) - 1:
-            return output
 
         # Update State
         ons = train_step['outputs']  # output names
@@ -170,34 +180,54 @@ class ModelTuner:
 
         return state
 
-    def score_fitness(self, results):
+    def score_fitness(self, unique_organisms):
+        # TODO fix nan. See if len(scores) == 1
+        scores = [uo['score'] for uo in unique_organisms.values()]
+        if len(scores) == 1:
+            for model in self.population:
+                dna = dna2str(model.dna)
+                model.score = unique_organisms[dna]['score']
+                model.fitness = 1
+            return
+
         if self.goal == 'min':
-            worst = max(results.values())
-            best = min(results.values())
+            worst = max(scores)
+            best = min(scores)
         else:
-            best = max(results.values())
-            worst = min(results.values())
+            best = max(scores)
+            worst = min(scores)
 
         for model in self.population:
             dna = dna2str(model.dna)
-            model.score = results[dna]
-            model.fitness = (results[dna] - worst) / (best - worst)
+            model.score = unique_organisms[dna]['score']
+            model.fitness = (model.score - worst) / (best - worst)
 
     def run(self):
         for gen in range(self.generations):
             if gen == 0:
-                self.populate_init(gen)
+                self.populate_init()
             else:
-                self.select_and_reproduce()
-
+                self.select_and_reproduce(
+                    elitism=1,
+                    nuc_change_chance=0.75
+                )
+            print('--------------------------------')
+            print(f'Starting generation {gen}: ')
+            t = time.time()
             # Get next fold of data for next generation
             x_train, x_test, y_train, y_test = next(self.data_fold_generator)
             results = self.experience_population(
-                {'x_train': x_train, 'x_test': x_test, 'y_train': y_train}
+                {'x_train': x_train, 'x_test': x_test, 'y_train': y_train, 'y_test': y_test}
             )
             
             self.score_fitness(results)
 
+
+            print('Results of generation ' + str(gen))
+            print('Run Time: ' + str(time.time() - t))
+            print(f'Average Score: {sum([p.score for p in self.population]) / len(self.population)}')
+            print(f'Unique members: ' + str(len(results.keys())))
+            print('--------------------------------')
         # score is converted into fitness, which always follows highest-is-best
         return max(self.population)
 
@@ -208,6 +238,7 @@ class Organism:
         self.dna = dna
         self.score = 0
         self.fitness = 0
+        self.knowledge = None
 
     def __lt__(self, other):
         return self.fitness < other.fitness
@@ -221,6 +252,9 @@ class Organism:
     def __str__(self):
         return dna2str(self.dna)
 
+    def __repr__(self):
+        return self.__str__()
+
     def add_gene(self, gene):
         self.dna.append(gene)
 
@@ -231,39 +265,55 @@ class Organism:
 def dna2str(dna):
     dna_str = ''
     for gene in dna:
-        for nucleotide in gene:
-            if isinstance(nucleotide, pd.Series):
-                dna_str += nucleotide.name + '|'
-            else:
-                dna_str += str(nucleotide) + '|'
-        dna_str += '//'
+        dna_str += '/ '
+        for i, nucleotide in enumerate(gene):
+            sep = ' '
+            if i < len(gene) - 1:
+                sep = ',' + sep
+            dna_str += str(nucleotide) + sep
     return dna_str
 
 
 def natural_selection(
         population,
-        selection_method='weighted_prob',
         survival_variation=0.1,
+        survival_percentage=0.7,
+        min_probability=1e-6
 ):
     sv = survival_variation
-    if selection_method == 'weighted_prob':
-        # Todo just do a choice function with weights and no replacement
-        max_fitness = max([p.fitness for p in population])
-        return [
-            m for m in population if m.fitness * (1 + uniform(-sv, sv)) > uniform(0, max_fitness)
-        ]
+    prob_dist = np.array([p.fitness * (1 + random.uniform(-sv, sv)) for p in population])
+    prob_dist = np.clip(prob_dist, min_probability, None)
+    prob_dist /= sum(prob_dist)
+    n_survivors = int(survival_percentage * len(population))
+
+    return np.random.choice(population, size=n_survivors, replace=False, p=prob_dist)
 
 
-def mutate(organism, framework, prob, max_mag):
-    # framework = decision points. Remember a gene determines a decision
-    # framework provide possible mutations of organism's genes
-    # Until nucleotides can represent continuous variables, max_mag is positions from the current nucleotide's value
+def mutate(organism, framework, prob, max_disc_shift, max_cont_shift):
+    """
+    mutates the genes of an organism, making it make different decisions
+    :param organism: object of class Organism
+    :param framework: model of all possible decisions for all decision points
+    :param prob: probability of mutation for each nucleotide
+    :param max_disc_shift: max discrete shift = the max change in index of the nucleotide option if options are discrete
+    :param max_cont_shift: max continuous shift = the max change in the value of a nucleotide if options are continuous
+    max_cont_shift is a percentage of the range from min to max value of nucleotide
+    :return: mutated organism
+    """
     for i in range(len(framework)):
         for j, nucleotide in enumerate(organism.dna[i]):
-            if random() < prob:
-                index = framework[i]['args'][j].index(nucleotide) + randint(-max_mag, max_mag)
-                index = min(0, max(len(framework[i]['args'][j]) - 1, index))
-                organism.dna[i][j] = framework[i]['args'][j][index]
+            if random.random() > prob:
+                continue
+            nf = framework[i]['args'][j]  # framework for specific nucleotide
+            if isinstance(nf, list):
+                index = nf.index(nucleotide) + random.randint(-max_disc_shift, max_disc_shift)
+                index = max(0, min(len(nf) - 1, index))
+                organism.dna[i][j] = nf[index]
+            elif isinstance(nf, tuple):
+                nucleotide += (nf[1] - nf[0]) * random.uniform(-max_cont_shift, max_cont_shift)
+                nucleotide = max(nf[0], min(nf[1], nucleotide))
+                nucleotide = round(nucleotide, 5)
+                organism.dna[i][j] = nucleotide
     return organism
 
 

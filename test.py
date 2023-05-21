@@ -12,9 +12,6 @@ from sklearn.metrics import mean_squared_error as mse
 
 from multiprocessing import freeze_support
 
-sys.path.append('C:\\Users\\Ken\\Dropbox\\Programming\\EZ-Neural-Net')
-from EZNN import create_model
-
 
 def simulate_missing_data(data, chance):
     """
@@ -36,14 +33,14 @@ def simulate_missing_data(data, chance):
     return df_miss
 
 
-def gen_imputer(x_train, max_iter, tol, estimator):
-    imputer = IterativeImputer(max_iter=max_iter, tol=tol, random_state=42, estimator=estimator(), verbose=True)
-    imputer.fit(x_train)
-    return imputer
-
-
-def MICE(x_train, x_test):
-    imputer = IterativeImputer(max_iter=7, tol=0.1, random_state=42, estimator=RandomForestRegressor(), verbose=True)
+def MICE(x_train, x_test, max_iter, tolerance):
+    imputer = IterativeImputer(
+        max_iter=max_iter,
+        tol=tolerance,
+        random_state=42,
+        estimator=RandomForestRegressor(),
+        # verbose=True
+    )
     imputer.fit(x_train)
     x_train = imputer.transform(x_train)
     x_test = imputer.transform(x_test)
@@ -124,23 +121,24 @@ def main():
     df = pd.read_csv('G:\\Programming\\mushroom.csv')
     df, encoders = oh_v_or(df, *[1 if col == 'class' else 0 for col in df.columns])
 
-    print(df)
-
-    mt = ModelTuner(None, df, 'class', generations=5, pop_size=4, goal='min')
-    nn = create_model([10, 3, 1])
+    mt = ModelTuner(None, df, 'class', generations=10, pop_size=20, goal='min')
 
     # add_step: self, func, inputs, outputs=None, *args, name=None
     # mt.add_step(one_hot_encode, 'x_train', ['x_train', 'encoders'], *[[0, 1] for _ in range(len(df.columns) - 1)])
-    mt.add_decision_point(simulate_missing_data, 'x_train', 'x_train', [i / 100 for i in range(10)])
-    mt.add_decision_point(simulate_missing_data, 'x_test', 'x_test', [i / 100 for i in range(10)])
-    mt.add_decision_point(MICE, ['x_train', 'x_test'], ['x_train', 'x_test'])
-    mt.add_decision_point(create_model, ['x_train', 'y_train'], 'model')
-    mt.add_decision_point('model.predict', 'x_test', 'test_pred')
 
-    # TODO handle strings as funcs to reference items in state
-    mt.add_decision_point(mse, ['test_pred', 'y_test'])
+    mt.add_decision_point(simulate_missing_data, 'smd_train', 'x_train', 'x_train', [(0.1, 0.95)])
+    mt.add_decision_point(simulate_missing_data, 'smd_test', 'x_test', 'x_test', [(0.1, 0.95)])
+    mt.add_decision_point(MICE, inputs=['x_train', 'x_test'], outputs=['x_train', 'x_test'], args=[[1, 2], (0.5, 1)])
+    mt.add_decision_point(RandomForestRegressor, outputs='model', args=[range(10, 100)])  # todo try making model before adding decision points
+    mt.add_decision_point('model.fit', inputs=['x_train', 'y_train'], outputs='model')
+    mt.add_decision_point('model.predict', inputs='x_test', outputs='test_pred')
+    mt.add_decision_point(mse, inputs=['test_pred', 'y_test'], outputs='score')
 
     results = mt.run()
+    print(results.dna)
+    print(results.knowledge.keys())
+    print(results.score)
+    print(results.fitness)
 
 if __name__ == '__main__':
     main()
