@@ -4,6 +4,7 @@ from EZMT import ModelTuner
 import sys
 from sklearn.preprocessing import LabelEncoder
 from sklearn.preprocessing import OneHotEncoder
+from sklearn.linear_model import LinearRegression
 import numpy as np
 from sklearn.experimental import enable_iterative_imputer
 from sklearn.impute import IterativeImputer
@@ -115,24 +116,32 @@ def oh_v_or(data, *args, cols=None):
     return data, encoders
 
 
+def lin_reg(x, y):
+    model = LinearRegression()
+    model.fit(x, y)
+    return model.predict(y)
+
 def main():
     freeze_support()
 
     df = pd.read_csv('G:\\Programming\\mushroom.csv')
     df, encoders = oh_v_or(df, *[1 if col == 'class' else 0 for col in df.columns])
 
-    mt = ModelTuner(None, df, 'class', generations=10, pop_size=20, goal='min')
+    model_space = [
+        {'func': simulate_missing_data, 'inputs': 'x_train', 'outputs': 'x_train', 'args': [(0.1, 0.95)]},
+        {'func': simulate_missing_data, 'inputs': 'x_test', 'outputs': 'x_test', 'args': [(0.1, 0.95)]},
+        {'func': MICE, 'inputs': ['x_train', 'x_test'], 'outputs': ['x_train', 'x_test'], 'args': [[1, 2], (0.5, 1)]},
+        [
+            {'func': RandomForestRegressor, 'outputs': 'model', 'args': [range(10, 100)]},
+            {'func': LinearRegression, 'outputs': 'model'} # todo try making prediction model before model space
+        ],
+        {'func': 'model.fit', 'inputs': ['x_train', 'y_train'], 'outputs': 'model'},
+        {'func': 'model.predict', 'inputs': 'x_test', 'outputs': 'test_pred'},
+        {'func': mse, 'inputs': ['test_pred', 'y_test'], 'outputs':'score'}
+    ]
+    # TODO Append number of each step of the same name, run checks for inputs + outputs at mt instantiation
 
-    # add_step: self, func, inputs, outputs=None, *args, name=None
-    # mt.add_step(one_hot_encode, 'x_train', ['x_train', 'encoders'], *[[0, 1] for _ in range(len(df.columns) - 1)])
-
-    mt.add_decision_point(simulate_missing_data, 'smd_train', 'x_train', 'x_train', [(0.1, 0.95)])
-    mt.add_decision_point(simulate_missing_data, 'smd_test', 'x_test', 'x_test', [(0.1, 0.95)])
-    mt.add_decision_point(MICE, inputs=['x_train', 'x_test'], outputs=['x_train', 'x_test'], args=[[1, 2], (0.5, 1)])
-    mt.add_decision_point(RandomForestRegressor, outputs='model', args=[range(10, 100)])  # todo try making model before adding decision points
-    mt.add_decision_point('model.fit', inputs=['x_train', 'y_train'], outputs='model')
-    mt.add_decision_point('model.predict', inputs='x_test', outputs='test_pred')
-    mt.add_decision_point(mse, inputs=['test_pred', 'y_test'], outputs='score')
+    mt = ModelTuner(model_space, df, 'class', generations=10, pop_size=20, goal='min')
 
     results = mt.run()
     print(results.dna)

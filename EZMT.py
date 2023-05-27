@@ -10,78 +10,85 @@ pp = pprint.PrettyPrinter(indent=4)
 
 class ModelTuner:
 
-    def __init__(self, pool, data, y_col, generations=1, pop_size=20, goal='min'):
+    def __init__(self, model_space, data, y_col, generations=1, pop_size=20, goal='min'):
         # Generations can be used for batches of data and not for evolution
-        if pool is None:
-            self.pool = mp.Pool(8)
-        else:
-            self.pool = pool
-
+        self.model_space = model_space
+        self.validate_input()
+        self.pool = mp.Pool(8)
         self.data_fold_generator = generate_stratified_folds(data, generations, y_col)
-
-        self.decision_points = []
         self.generations = generations
-        self.population = [Organism([]) for _ in range(pop_size)]
+        self.population = []
         self.goal = goal
 
-    def add_decision_point(self, func, name=None, inputs=None, outputs=None, args=None):
-        """
-        Add step to skeleton (self.steps)
-        :param func:
-        :param inputs: names of the keys whose values must be retrieved from state.
-                        Will be supplied to func in the order that they are listed
-        :param outputs: names of the keys that will hold the outputs in state.
-                        Must be the same length and order as outputs of func
-        :param args: [
-                [arg0_0_0, arg0_0_1],    <- Possible choices for first argument after input args of first step in model
-                (arg0_1_0, arg0_1_1)     <- Range of choices for second argument after input args of first step in model
-            ]
-        :param name: name of the function, if None, func.__name__
-        :return: None
-        """
+    def validate_input(self):
+        new_model_space = []
+        names_seen = {}
 
-        if name is None:
-            name = func if isinstance(func, str) else func.__name__
-        if outputs is None:
-            outputs = []
-        elif isinstance(outputs, str):
-            outputs = [outputs]
-        if inputs is None:
-            inputs = []
-        elif isinstance(inputs, str):
-            inputs = [inputs]
-        if args is None:
-            args = []
+        for gene_space in self.model_space:
+            if isinstance(gene_space, dict):
+                gene_space = [gene_space]
 
-        decision_point = {
-            'name': name,
-            'func': func,
-            'inputs': inputs,
-            'args': args,
-            'outputs': outputs
-        }
+            new_gene_space = []
+            for function_dict in gene_space:
+                if not isinstance(function_dict, dict):
+                    raise ValueError(f"{function_dict} is not a dictionary.")
+                if 'func' not in function_dict:
+                    raise ValueError(f"No 'func' key found in {function_dict}.")
+                if not callable(function_dict['func']) and not isinstance(function_dict['func'], str):
+                    raise ValueError(f"'func' value in {function_dict} is not callable or string.")
+                if 'args' in function_dict:
+                    if not isinstance(function_dict['args'], list):
+                        raise ValueError(f"'args' value in {function_dict} is not a list.")
+                    for arg in function_dict['args']:
+                        if not isinstance(arg, list) and not isinstance(arg, tuple):
+                            raise ValueError(
+                                f"Argument {arg} in 'args' value of {function_dict} is not a list or tuple.")
+                if 'kwargs' in function_dict:
+                    if not isinstance(function_dict['kwargs'], dict):
+                        raise ValueError(f"'kwargs' value in {function_dict} is not a dictionary.")
+                    for value in function_dict['kwargs'].values():
+                        if not isinstance(value, list) and not isinstance(value, tuple):
+                            raise ValueError(
+                                f"Value {value} in 'kwargs' value of {function_dict} is not a list or tuple.")
+                if 'name' not in function_dict:
+                    if callable(function_dict['func']):
+                        function_dict['name'] = function_dict['func'].__name__
+                    else:
+                        function_dict['name'] = function_dict['func']
+                if function_dict['name'] in names_seen:
+                    names_seen[function_dict['name']] += 1
+                    function_dict['name'] += f'_{names_seen[function_dict["name"]]}'
+                else:
+                    names_seen[function_dict['name']] = 0
+                new_gene_space.append(function_dict)
+            new_model_space.append(new_gene_space)
 
-        self.decision_points.append(decision_point)
+        self.model_space = new_model_space
+        return True
 
     def populate_init(self):
-        """
-        Generates a population by iterating through gene slots and randomly choosing genes.
-        In other words, generate each population member's first gene, then do everyone's second, etc
-        """
         # Generate initial population
-        pp.pprint(self.decision_points)
-        for dp in self.decision_points:
-            # One gene in the DNA corresponds to one decision function in the chain of decisions
-            for i in range(len(self.population)):
-                gene = []
-                for nuc_options in dp['args']:
-                    # One nucleotide corresponds to one argument.
-                    # One of multiple options (e.g. A, C, G, T) is chosen
-                    if isinstance(nuc_options, list):  # discrete options
-                        gene.append(random.choice(nuc_options))
-                    if isinstance(nuc_options, tuple):  # continuous options
-                        gene.append(round(random.uniform(nuc_options[0], nuc_options[1]), 5))
-                self.population[i].add_gene(gene)
+        pp.pprint(self.model_space)
+        population = []
+
+        for _ in range(self.population_size):
+            organism = Organism()
+            for gene_space in self.model_space:
+                chosen_function_dict = random.choice(gene_space)
+                gene = {'func': chosen_function_dict['func']}
+
+                if 'args' in chosen_function_dict:
+                    gene['args'] = [random.choice(arg) if isinstance(arg, list) else random.uniform(*arg) for arg in
+                                    chosen_function_dict['args']]
+
+                if 'kwargs' in chosen_function_dict:
+                    gene['kwargs'] = {key: random.choice(value) if isinstance(value, list) else random.uniform(*value)
+                                      for key, value in chosen_function_dict['kwargs'].items()}
+
+                organism.add_gene(gene)
+            population.append(organism)
+
+        return population
 
     def select_and_reproduce(
             self,
@@ -304,6 +311,7 @@ def mutate(organism, framework, prob, max_disc_shift, max_cont_shift):
         for j, nucleotide in enumerate(organism.dna[i]):
             if random.random() > prob:
                 continue
+            # TODO need to change reference to nf because gene spaces can be lists now
             nf = framework[i]['args'][j]  # framework for specific nucleotide
             if isinstance(nf, list):
                 index = nf.index(nucleotide) + random.randint(-max_disc_shift, max_disc_shift)
@@ -315,6 +323,31 @@ def mutate(organism, framework, prob, max_disc_shift, max_cont_shift):
                 nucleotide = round(nucleotide, 5)
                 organism.dna[i][j] = nucleotide
     return organism
+
+
+def choose_nucleotides(nucleotide_space):
+    nucleotides = {}
+
+    if 'args' in nucleotide_space:
+        nucleotides['args'] = [random.choice(arg) if isinstance(arg, list) else random.uniform(*arg)
+                               for arg in nucleotide_space['args']]
+
+    if 'kwargs' in nucleotide_space:
+        nucleotides['kwargs'] = {key: random.choice(value) if isinstance(value, list) else random.uniform(*value)
+                                 for key, value in nucleotide_space['kwargs'].items()}
+
+    return nucleotides
+
+
+def choose_gene_from_space(gene_space):
+    chosen_function_dict = random.choice(gene_space)
+    gene = {'func': chosen_function_dict['func']}
+    nucleotides = choose_nucleotides(chosen_function_dict)
+
+    # add chosen nucleotides to the gene
+    gene.update(nucleotides)
+
+    return gene
 
 
 def generate_stratified_folds(data, n_splits, y_col):
