@@ -6,6 +6,7 @@ import pprint
 import time
 from copy import deepcopy
 
+from organism import Organism, dna2str
 
 pp = pprint.PrettyPrinter(indent=4)
 
@@ -134,7 +135,7 @@ class ModelTuner:
             unique_organisms = dict()
             # Start all processes for this section of DNA. Only process unique decisions based on populations' DNAs
             for organism in self.population:
-                current_dna = dna2str(organism.dna[:i+1])
+                current_dna = dna2str(organism.dna[:i + 1])
 
                 # check if identical series of decisions up until this stage has already started calculating
                 if current_dna in unique_organisms.keys():
@@ -263,58 +264,6 @@ class ModelTuner:
             print('--------------------------------')
         # score is converted into fitness, which always follows highest-is-best
         return max(self.population)
-
-
-class Organism:
-
-    def __init__(self, dna=None):
-        if dna is None:
-            self.dna = []
-        else:
-            self.dna = dna
-        self.score = 0
-        self.fitness = 0
-        self.knowledge = None
-
-    def __lt__(self, other):
-        return self.fitness < other.fitness
-
-    def __eq__(self, other):
-        return dna2str(self.dna) == dna2str(other.dna)
-
-    def __hash__(self):
-        return hash(dna2str(self.dna))
-
-    def __str__(self):
-        return dna2str(self.dna)
-
-    def __repr__(self):
-        return self.__str__()
-
-    def add_gene(self, gene):
-        self.dna.append(gene)
-
-    def mate(self, other):
-        pass
-
-    def reproduce(self):
-        return Organism(deepcopy(self.dna))
-
-    def reset(self):
-        self.score = 0
-        self.fitness = 0
-        self.knowledge = None
-
-
-def dna2str(dna):
-    dna_str = ''
-    for gene in dna:
-        dna_str += gene['name'] + '('
-        dna_str += ', '.join([str(a) for a in gene['args']])
-        for key, value in gene['kwargs'].items():
-            dna_str += f', {key}={value}'
-        dna_str += ')'
-    return dna_str
 
 
 def natural_selection(
