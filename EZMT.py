@@ -30,7 +30,7 @@ class ModelTuner:
 
         for gene_space in self.model_space:
             if isinstance(gene_space, dict):
-                gene_space = [gene_space]
+                gene_space = [gene_space]  # Standardize so we can do random.choice
 
             new_gene_space = []
             for function_dict in gene_space:
@@ -48,7 +48,7 @@ class ModelTuner:
                         function_dict[io] = []
                         continue
                     if isinstance(function_dict[io], str):
-                        function_dict[io] = [function_dict[io]]
+                        function_dict[io] = [function_dict[io]]  # standardize
                     if not hasattr(function_dict[io], '__iter__'):
                         raise TypeError(f"'{io}' value in {function_dict} is not iterable.")
 
@@ -90,7 +90,7 @@ class ModelTuner:
         for _ in range(self.population_size):
             organism = Organism()
             for gene_space in self.model_space:
-                gene = choose_gene_from_space(gene_space)
+                gene = choose_gene_from_space(gene_space)  # Chooses nucleotide space and then specifies nucleotides
                 organism.add_gene(gene)
             self.population.append(organism)
 
@@ -349,6 +349,7 @@ def mutate(organism, model_space, func_prob, nuc_prob, max_disc_shift, max_cont_
 
         if len(gene_space) > 1 and random.uniform(0, 1) <= func_prob:
             organism.dna[i] = choose_gene_from_space(gene_space)
+            # choosing a new gene (function) chooses random nucleotides (args), so no need to mutate this gene further
             continue
 
         # find corresponding gene_space in model_space
@@ -388,11 +389,11 @@ def choose_nucleotides(nucleotide_space):
 
 
 def choose_gene_from_space(gene_space):
-    gene = dict(random.choice(gene_space))
-    nucleotides = choose_nucleotides(gene)
+    nucleotide_space = random.choice(gene_space)
+    nucleotides = choose_nucleotides(nucleotide_space)
     # add chosen nucleotides to the gene
+    gene = deepcopy(nucleotide_space)
     gene.update(nucleotides)
-
     return gene
 
 
@@ -428,7 +429,6 @@ step 1. Build skeleton of model with the following structure:
     ]
     Assume that some_func's has an additional argument before the args listed that will hold the data from the
         resulting step.
-    If you need to choose from multiple functions, make a wrapper function that chooses one based on an argument.
     Each member of the population can be identified by their DNA
     '0|0.6|False|a//1|True' => arg0_0|arg0_1|arg0_2|arg0_3//arg1_0|arg1_1
 step 2. Choose some subset of all possible combinations of choices from skeleton in step 1.

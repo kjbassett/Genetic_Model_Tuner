@@ -62,7 +62,7 @@ def ord_transform(encoder, values):
     try:
         return encoder.transform(values)
     except ValueError:
-        if hasattr(encoder, 'classes_'):
+        if hasattr(encoder, "classes_"):
             encoder.fit(np.append(encoder.classes_, values))
         else:
             encoder.fit(values)
@@ -71,7 +71,7 @@ def ord_transform(encoder, values):
 
 def ordinal_encode(data, cols=None, encoders=None):
     if cols is None:
-        cols = [col for col in data.columns if data[col].dtype == 'object']
+        cols = [col for col in data.columns if data[col].dtype == "object"]
     elif isinstance(cols, str):
         cols = [cols]
     if encoders is None:
@@ -83,14 +83,14 @@ def ordinal_encode(data, cols=None, encoders=None):
         else:
             le = LabelEncoder()
         data[col] = ord_transform(le, data[col])
-        print('Are the mapping being updated in this scope or only in ord_transform?')
+        print("Are the mapping being updated in this scope or only in ord_transform?")
         encoders[col] = le  # Save the label encoder to decode later
     return data, encoders
 
 
 def one_hot_encode(data, cols=None):
     if cols is None:
-        cols = [col for col in data.columns if data[col].dtype == 'object']
+        cols = [col for col in data.columns if data[col].dtype == "object"]
     elif isinstance(cols, str):
         cols = [cols]
     encoders = {}
@@ -106,12 +106,12 @@ def one_hot_encode(data, cols=None):
 
 def oh_v_or(data, *args, cols=None):
     if cols is None:
-        cols = [col for col in data.columns if data[col].dtype == 'object']
+        cols = [col for col in data.columns if data[col].dtype == "object"]
     elif isinstance(cols, str):
         cols = [cols]
 
     if len(args) != len(cols):
-        raise Exception('args must same same length as cols')
+        raise Exception("args must same same length as cols")
 
     encoders = {}
     for i, col in enumerate(cols):
@@ -129,28 +129,67 @@ def oh_v_or(data, *args, cols=None):
 def main():
     freeze_support()
 
-    df = pd.read_csv('G:\\Programming\\mushroom.csv')
-    df, encoders = oh_v_or(df, *[1 if col == 'class' else 0 for col in df.columns])
+    # df = pd.read_csv('G:\\Programming\\mushroom.csv')
+    # df, encoders = oh_v_or(df, *[1 if col == 'class' else 0 for col in df.columns])
+
+    df = pd.read_csv(
+        "G:\\Programming\\house-prices-advanced-regression-techniques\\train.csv"
+    )
+    df, encoders = oh_v_or(df, *[0 for col in df.columns if df[col].dtype == "object"])
+    df = df.drop(columns="Id")
+    print(f"{len(df.columns)} columns")
+    print(df)
 
     model_space = [
         # {'func': oh_v_or, 'inputs': ['x_train', 'x_test'], 'outputs':['x_train', 'x_test'], 'args': [1 if col == 'class' else [0, 1] for col in df.columns]},
-        {'func': simulate_missing_data, 'name': 'smd', 'inputs': 'x_train', 'outputs': 'x_train', 'args': [(0.1, 0.95)]},
-        {'func': simulate_missing_data, 'name': 'smd', 'inputs': 'x_test', 'outputs': 'x_test', 'args': [(0.1, 0.95)]},
+        # {'func': simulate_missing_data, 'name': 'smd', 'inputs': 'x_train', 'outputs': 'x_train', 'args': [(0.1, 0.95)]},
+        # {'func': simulate_missing_data, 'name': 'smd', 'inputs': 'x_test', 'outputs': 'x_test', 'args': [(0.1, 0.95)]},
         [  # Imputation
-            {'func': MICE, 'inputs': ['x_train', 'x_test'], 'outputs': ['x_train', 'x_test'], 'args': [range(1, 6), (0.1, 3)]},
-            {'func': KNNImpute, 'inputs': ['x_train', 'x_test'], 'outputs': ['x_train', 'x_test'], 'args': [range(3, 10)]}
+            {
+                "func": MICE,
+                "inputs": ["x_train", "x_test"],
+                "outputs": ["x_train", "x_test"],
+                "args": [range(1, 6), (0.1, 3)],
+            },
+            {
+                "func": KNNImpute,
+                "inputs": ["x_train", "x_test"],
+                "outputs": ["x_train", "x_test"],
+                "args": [range(3, 10)],
+            },
         ],
-        [
-            {'func': RandomForestRegressor, 'name': 'rf', 'outputs': 'model', 'args': [range(10, 50)]},
-            {'func': Ridge, 'name': 'lr', 'outputs': 'model', 'kwargs': {'alpha': [0.0001, 0.001, 0.1, 1, 10, 100, 1000]}},
-            {'func': Lasso, 'name': 'lr', 'outputs': 'model', 'kwargs': {'alpha': [0.0001, 0.001, 0.1, 1, 10, 100, 1000]}}# todo try making prediction model before model space
+        [  # Create Model
+            {
+                "func": RandomForestRegressor,
+                "name": "rf",
+                "outputs": "model",
+                "args": [range(10, 50)],
+            },
+            {
+                "func": Ridge,
+                "name": "rr",
+                "outputs": "model",
+                "kwargs": {"alpha": [0.0001, 0.001, 0.1, 1, 10, 100, 1000]},
+            },
+            {
+                "func": Lasso,
+                "name": "lr",
+                "outputs": "model",
+                "kwargs": {"alpha": [0.0001, 0.001, 0.1, 1, 10, 100, 1000]},
+            },  # todo try making prediction model before model space
         ],
-        {'func': 'model.fit', 'inputs': ['x_train', 'y_train'], 'outputs': 'model'},
-        {'func': 'model.predict', 'inputs': 'x_test', 'outputs': 'test_pred'},
-        {'func': mse, 'inputs': ['test_pred', 'y_test'], 'outputs':'score'}
+        # Fit Model
+        {"func": "model.fit", "inputs": ["x_train", "y_train"], "outputs": "model"},
+        # Predict Training Data
+        {"func": "model.predict", "inputs": "x_test", "outputs": "test_pred"},
+        # Score result
+        {"func": mse, "inputs": ["test_pred", "y_test"], "outputs": "score"},
     ]
 
-    mt = ModelTuner(model_space, df, 'class', generations=35, pop_size=6, goal='min')
+    # mt = ModelTuner(model_space, df, 'class', generations=35, pop_size=6, goal='min')
+    mt = ModelTuner(
+        model_space, df, "SalePrice", generations=10, pop_size=6, goal="min"
+    )
 
     model = mt.run()
     print(model)
@@ -158,6 +197,6 @@ def main():
     print(model.score)
     print(model.fitness)
 
-if __name__ == '__main__':
-    main()
 
+if __name__ == "__main__":
+    main()
