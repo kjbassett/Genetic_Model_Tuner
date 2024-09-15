@@ -36,55 +36,67 @@ class ModelTuner:
             new_gene_space = []
             for function_dict in gene_space:
 
-                if not isinstance(function_dict, dict):
-                    raise TypeError(f"{function_dict} is not a dictionary.")
-
-                if 'func' not in function_dict:
-                    raise ValueError(f"No 'func' key found in {function_dict}.")
-                if not callable(function_dict['func']) and not isinstance(function_dict['func'], str):
-                    raise TypeError(f"'func' value in {function_dict} is not callable or string.")
-
-                for io in ('inputs', 'outputs'):
-                    if io not in function_dict:
-                        function_dict[io] = []
-                        continue
-                    if isinstance(function_dict[io], str):
-                        function_dict[io] = [function_dict[io]]  # standardize
-                    if not hasattr(function_dict[io], '__iter__'):
-                        raise TypeError(f"'{io}' value in {function_dict} is not iterable.")
-
-                if 'args' not in function_dict:
-                    function_dict['args'] = []
+                # function info in function dict
+                if "train" not in function_dict and 'inference' not in function_dict:
+                    self.validate_function(function_dict, names_seen)
+                # function info different for training and inference. function infos in 'train' and 'inference' keys
+                # validate train func
+                elif 'train' in function_dict:
+                    self.validate_function(function_dict['train'], names_seen)
+                # validate inference func
+                elif 'inference' in function_dict:
+                    self.validate_function(function_dict['inference'], names_seen)
+                # needs func, else needs train and/or inference
                 else:
-                    if not isinstance(function_dict['args'], list):
-                        raise TypeError(f"'args' value in {function_dict} is not a list.")
-                    for arg in function_dict['args']:
-                        if not hasattr(arg, '__iter__'):
-                            raise TypeError(f"Argument {arg} in 'args' value of {function_dict} is not iterable.")
+                    raise ValueError(f"Bad function dictionary config. No 'train', 'inference' or 'func' key found.")
 
-                if 'kwargs' not in function_dict:
-                    function_dict['kwargs'] = dict()
-                if not isinstance(function_dict['kwargs'], dict):
-                    raise TypeError(f"'kwargs' value in {function_dict} is not a dictionary.")
-                for value in function_dict['kwargs'].values():
-                    if not hasattr(value, '__iter__'):
-                        raise TypeError(f"Value {value} in 'kwargs' value of {function_dict} is not iterable.")
 
-                if 'name' not in function_dict:
-                    if callable(function_dict['func']):
-                        function_dict['name'] = function_dict['func'].__name__
-                    else:
-                        function_dict['name'] = function_dict['func']
-                if function_dict['name'] in names_seen:
-                    names_seen[function_dict['name']] += 1
-                    function_dict['name'] += f'_{names_seen[function_dict["name"]]}'
-                else:
-                    names_seen[function_dict['name']] = 0
 
                 new_gene_space.append(function_dict)
             new_model_space.append(new_gene_space)
 
         self.model_space = new_model_space
+
+    def validate_function(self, function_dict, names_seen):
+        if not isinstance(function_dict, dict):
+            raise TypeError(f"{function_dict} is not a dictionary.")
+        if 'func' not in function_dict:
+            raise ValueError(f"No 'func' key found in {function_dict}.")
+        if not callable(function_dict['func']) and not isinstance(function_dict['func'], str):
+            raise TypeError(f"'func' value in {function_dict} is not callable or string.")
+        for io in ('inputs', 'outputs'):
+            if io not in function_dict:
+                function_dict[io] = []
+                continue
+            if isinstance(function_dict[io], str):
+                function_dict[io] = [function_dict[io]]  # standardize
+            if not hasattr(function_dict[io], '__iter__'):
+                raise TypeError(f"'{io}' value in {function_dict} is not iterable.")
+        if 'args' not in function_dict:
+            function_dict['args'] = []
+        else:
+            if not isinstance(function_dict['args'], list):
+                raise TypeError(f"'args' value in {function_dict} is not a list.")
+            for arg in function_dict['args']:
+                if not hasattr(arg, '__iter__'):
+                    raise TypeError(f"Argument {arg} in 'args' value of {function_dict} is not iterable.")
+        if 'kwargs' not in function_dict:
+            function_dict['kwargs'] = dict()
+        if not isinstance(function_dict['kwargs'], dict):
+            raise TypeError(f"'kwargs' value in {function_dict} is not a dictionary.")
+        for value in function_dict['kwargs'].values():
+            if not hasattr(value, '__iter__'):
+                raise TypeError(f"Value {value} in 'kwargs' value of {function_dict} is not iterable.")
+        if 'name' not in function_dict:
+            if callable(function_dict['func']):
+                function_dict['name'] = function_dict['func'].__name__
+            else:
+                function_dict['name'] = function_dict['func']
+        if function_dict['name'] in names_seen:
+            names_seen[function_dict['name']] += 1
+            function_dict['name'] += f'_{names_seen[function_dict["name"]]}'
+        else:
+            names_seen[function_dict['name']] = 0
 
     def populate_init(self):
         # Generate initial population
