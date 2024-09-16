@@ -30,34 +30,54 @@ class ModelTuner:
         names_seen = {}
 
         for gene_space in self.model_space:
-            if isinstance(gene_space, dict):
+            if isinstance(gene_space, dict):  # only one choice of function
                 gene_space = [gene_space]  # Standardize so we can do random.choice
 
             new_gene_space = []
             for function_dict in gene_space:
-
-                # function info in function dict
-                if "train" not in function_dict and 'inference' not in function_dict:
-                    self.validate_function(function_dict, names_seen)
-                # function info different for training and inference. function infos in 'train' and 'inference' keys
-                # validate train func
-                elif 'train' in function_dict:
-                    self.validate_function(function_dict['train'], names_seen)
-                # validate inference func
-                elif 'inference' in function_dict:
-                    self.validate_function(function_dict['inference'], names_seen)
-                # needs func, else needs train and/or inference
-                else:
-                    raise ValueError(f"Bad function dictionary config. No 'train', 'inference' or 'func' key found.")
-
-
-
+                self.validate_function_dict(function_dict, names_seen)
                 new_gene_space.append(function_dict)
             new_model_space.append(new_gene_space)
 
         self.model_space = new_model_space
 
-    def validate_function(self, function_dict, names_seen):
+    def validate_function_dict(self, function_dict, names_seen):
+        # Make function_dict (AKA potential training step) is given a name
+        if 'name' not in function_dict:
+            # if name not provided and one function for training/inference, we can use the name of the function itself.
+            if 'func' in function_dict:
+                if callable(function_dict['func']):
+                    function_dict['name'] = function_dict['func'].__name__
+                else:  # function is a string representing the output of a previous step. Function stored in the state
+                    function_dict['name'] = function_dict['func']
+            else:
+                raise ValueError(
+                    "If you have different functions for training and inference, you have to provide a name."
+                )
+        # If multiple function dicts with the same name, add counter to name to make it unique
+        if function_dict['name'] in names_seen:
+            names_seen[function_dict['name']] += 1
+            function_dict['name'] += f'_{names_seen[function_dict["name"]]}'
+        else:
+            names_seen[function_dict['name']] = 0
+
+        if 'func' not in function_dict and 'train' not in function_dict and 'inference' in function_dict:
+            raise ValueError(f"Bad function dictionary config. No 'train', 'inference' or 'func' key found.")
+        if 'func' in function_dict and ('train' in function_dict or 'inference' in function_dict):
+            msg = "Bad function dictionary config. "
+            msg += "You should only use 'func' key  when train and inference functions are the same."
+            raise ValueError(msg)
+
+        # different function info for training and inference. function infos in 'train' and 'inference' keys
+        if 'train' in function_dict or 'inference' in function_dict:
+            # validate train func
+            if 'train' in function_dict:
+                self.validate_function_dict(function_dict['train'], names_seen)
+            # validate inference func
+            if 'inference' in function_dict:
+                self.validate_function_dict(function_dict['inference'], names_seen)
+            return
+
         if not isinstance(function_dict, dict):
             raise TypeError(f"{function_dict} is not a dictionary.")
         if 'func' not in function_dict:
@@ -87,16 +107,6 @@ class ModelTuner:
         for value in function_dict['kwargs'].values():
             if not hasattr(value, '__iter__'):
                 raise TypeError(f"Value {value} in 'kwargs' value of {function_dict} is not iterable.")
-        if 'name' not in function_dict:
-            if callable(function_dict['func']):
-                function_dict['name'] = function_dict['func'].__name__
-            else:
-                function_dict['name'] = function_dict['func']
-        if function_dict['name'] in names_seen:
-            names_seen[function_dict['name']] += 1
-            function_dict['name'] += f'_{names_seen[function_dict["name"]]}'
-        else:
-            names_seen[function_dict['name']] = 0
 
     def populate_init(self):
         # Generate initial population
@@ -274,6 +284,9 @@ class ModelTuner:
             print('Run Time: ' + str(time.time() - t))
             pp.pprint(self.metrics[-1])
             print('--------------------------------')
+            for model in self.population:
+                pp.pprint(model.dna)
+
         # score is converted into fitness, which always follows highest-is-best
         return max(self.population)
 
@@ -351,6 +364,9 @@ def choose_nucleotides(nucleotide_space):
 
 def choose_gene_from_space(gene_space):
     nucleotide_space = random.choice(gene_space)
+    # if different functions for training and inference, pick the training nucleotide space
+    if "train" in nucleotide_space:
+        nucleotide_space = nucleotide_space["train"]
     nucleotides = choose_nucleotides(nucleotide_space)
     # add chosen nucleotides to the gene
     gene = deepcopy(nucleotide_space)
