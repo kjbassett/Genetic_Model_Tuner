@@ -35,13 +35,14 @@ class ModelTuner:
 
             new_gene_space = []
             for function_dict in gene_space:
+                self.validate_gene_name(function_dict, names_seen)
                 self.validate_function_dict(function_dict, names_seen)
                 new_gene_space.append(function_dict)
             new_model_space.append(new_gene_space)
 
         self.model_space = new_model_space
 
-    def validate_function_dict(self, function_dict, names_seen):
+    def validate_gene_name(self, function_dict, names_seen):
         # Make function_dict (AKA potential training step) is given a name
         if 'name' not in function_dict:
             # if name not provided and one function for training/inference, we can use the name of the function itself.
@@ -61,13 +62,7 @@ class ModelTuner:
         else:
             names_seen[function_dict['name']] = 0
 
-        if 'func' not in function_dict and 'train' not in function_dict and 'inference' in function_dict:
-            raise ValueError(f"Bad function dictionary config. No 'train', 'inference' or 'func' key found.")
-        if 'func' in function_dict and ('train' in function_dict or 'inference' in function_dict):
-            msg = "Bad function dictionary config. "
-            msg += "You should only use 'func' key  when train and inference functions are the same."
-            raise ValueError(msg)
-
+    def validate_function_dict(self, function_dict, names_seen):
         # different function info for training and inference. function infos in 'train' and 'inference' keys
         if 'train' in function_dict or 'inference' in function_dict:
             # validate train func
@@ -77,6 +72,13 @@ class ModelTuner:
             if 'inference' in function_dict:
                 self.validate_function_dict(function_dict['inference'], names_seen)
             return
+
+        if 'func' not in function_dict and 'train' not in function_dict and 'inference' in function_dict:
+            raise ValueError(f"Bad function dictionary config. No 'train', 'inference' or 'func' key found.")
+        if 'func' in function_dict and ('train' in function_dict or 'inference' in function_dict):
+            msg = "Bad function dictionary config. "
+            msg += "You should only use 'func' key  when train and inference functions are the same."
+            raise ValueError(msg)
 
         if not isinstance(function_dict, dict):
             raise TypeError(f"{function_dict} is not a dictionary.")
