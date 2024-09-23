@@ -7,6 +7,7 @@ import time
 from copy import deepcopy
 
 from organism import Organism, dna2str
+from config_validation import validate_config
 
 pp = pprint.PrettyPrinter(indent=4)
 
@@ -15,8 +16,7 @@ class ModelTuner:
 
     def __init__(self, model_space, data, y_col, generations=1, pop_size=20, goal='min'):
         # Generations can be used for batches of data and not for evolution
-        self.model_space = model_space
-        self.validate_input()
+        self.model_space = validate_config(model_space)
         self.pool = mp.Pool(8)
         self.data_fold_generator = generate_stratified_folds(data, generations, y_col)
         self.generations = generations
@@ -24,91 +24,6 @@ class ModelTuner:
         self.population = []
         self.goal = goal
         self.metrics = []
-
-    def validate_input(self):
-        new_model_space = []
-        names_seen = {}
-
-        for gene_space in self.model_space:
-            if isinstance(gene_space, dict):  # only one choice of function
-                gene_space = [gene_space]  # Standardize so we can do random.choice
-
-            new_gene_space = []
-            for function_dict in gene_space:
-                self.validate_gene_name(function_dict, names_seen)
-                self.validate_function_dict(function_dict, names_seen)
-                new_gene_space.append(function_dict)
-            new_model_space.append(new_gene_space)
-
-        self.model_space = new_model_space
-
-    def validate_gene_name(self, function_dict, names_seen):
-        # Make function_dict (AKA potential training step) is given a name
-        if 'name' not in function_dict:
-            # if name not provided and one function for training/inference, we can use the name of the function itself.
-            if 'func' in function_dict:
-                if callable(function_dict['func']):
-                    function_dict['name'] = function_dict['func'].__name__
-                else:  # function is a string representing the output of a previous step. Function stored in the state
-                    function_dict['name'] = function_dict['func']
-            else:
-                raise ValueError(
-                    "If you have different functions for training and inference, you have to provide a name."
-                )
-        # If multiple function dicts with the same name, add counter to name to make it unique
-        if function_dict['name'] in names_seen:
-            names_seen[function_dict['name']] += 1
-            function_dict['name'] += f'_{names_seen[function_dict["name"]]}'
-        else:
-            names_seen[function_dict['name']] = 0
-
-    def validate_function_dict(self, function_dict, names_seen):
-        # different function info for training and inference. function infos in 'train' and 'inference' keys
-        if 'train' in function_dict or 'inference' in function_dict:
-            # validate train func
-            if 'train' in function_dict:
-                self.validate_function_dict(function_dict['train'], names_seen)
-            # validate inference func
-            if 'inference' in function_dict:
-                self.validate_function_dict(function_dict['inference'], names_seen)
-            return
-
-        if 'func' not in function_dict and 'train' not in function_dict and 'inference' in function_dict:
-            raise ValueError(f"Bad function dictionary config. No 'train', 'inference' or 'func' key found.")
-        if 'func' in function_dict and ('train' in function_dict or 'inference' in function_dict):
-            msg = "Bad function dictionary config. "
-            msg += "You should only use 'func' key  when train and inference functions are the same."
-            raise ValueError(msg)
-
-        if not isinstance(function_dict, dict):
-            raise TypeError(f"{function_dict} is not a dictionary.")
-        if 'func' not in function_dict:
-            raise ValueError(f"No 'func' key found in {function_dict}.")
-        if not callable(function_dict['func']) and not isinstance(function_dict['func'], str):
-            raise TypeError(f"'func' value in {function_dict} is not callable or string.")
-        for io in ('inputs', 'outputs'):
-            if io not in function_dict:
-                function_dict[io] = []
-                continue
-            if isinstance(function_dict[io], str):
-                function_dict[io] = [function_dict[io]]  # standardize
-            if not hasattr(function_dict[io], '__iter__'):
-                raise TypeError(f"'{io}' value in {function_dict} is not iterable.")
-        if 'args' not in function_dict:
-            function_dict['args'] = []
-        else:
-            if not isinstance(function_dict['args'], list):
-                raise TypeError(f"'args' value in {function_dict} is not a list.")
-            for arg in function_dict['args']:
-                if not hasattr(arg, '__iter__'):
-                    raise TypeError(f"Argument {arg} in 'args' value of {function_dict} is not iterable.")
-        if 'kwargs' not in function_dict:
-            function_dict['kwargs'] = dict()
-        if not isinstance(function_dict['kwargs'], dict):
-            raise TypeError(f"'kwargs' value in {function_dict} is not a dictionary.")
-        for value in function_dict['kwargs'].values():
-            if not hasattr(value, '__iter__'):
-                raise TypeError(f"Value {value} in 'kwargs' value of {function_dict} is not iterable.")
 
     def populate_init(self):
         # Generate initial population
@@ -170,7 +85,7 @@ class ModelTuner:
                 try:
                     state = dict(prev_unique[prev_dna])  # Must wrap in dict to make a copy
                 except KeyError:
-                    quit()
+                    raise KeyError(f'No state found for previous dna: {prev_dna}')
                 unique_organisms[current_dna] = self.pool.apply_async(
                     self.make_decision,
                     args=(organism, i, state)
@@ -189,8 +104,8 @@ class ModelTuner:
 
     @staticmethod
     def make_decision(organism, i, state):
-        gene = organism.dna[i]
-        func = organism.dna[i]['func']
+        gene_train = organism.dna[i]['train']  # training version of current gene
+        func = gene_train['func']
 
         if isinstance(func, str):  # if str, get it from values of state ('model.run' => 'model' is a key in state)
             f = func.split('.')
@@ -199,14 +114,14 @@ class ModelTuner:
                 if hasattr(func, part):
                     func = getattr(func, part)
                 else:
-                    raise Exception('Could not get ' + part + ' from ' + organism.dna[i]['func'])
+                    raise Exception('Could not get ' + part + ' from ' + func)
 
         # get data with matching genes from previous stage of development and apply function + args of next gene
-        args = (*[state[inp] for inp in gene['inputs']], *gene['args'])
-        output = func(*args, **gene['kwargs'])
+        args = (*[state[inp] for inp in gene_train['inputs']], *gene_train['args'])
+        output = func(*args, **gene_train['kwargs'])
 
         # Update State
-        ons = gene['outputs']  # output names
+        ons = gene_train['outputs']  # output names
         if ons:
             if len(ons) > 1:
                 output = {o: output[j] for j, o in enumerate(ons)}
@@ -322,6 +237,8 @@ def mutate(organism, model_space, func_prob, nuc_prob, max_disc_shift, max_cont_
     """
     for i, gene in enumerate(organism.dna):
         gene_space = model_space[i]
+        #
+        #  you left off here because it needs to mutate train version
 
         if len(gene_space) > 1 and random.uniform(0, 1) <= func_prob:
             organism.dna[i] = choose_gene_from_space(gene_space)
@@ -332,6 +249,11 @@ def mutate(organism, model_space, func_prob, nuc_prob, max_disc_shift, max_cont_
         gene_variant = next((space for space in gene_space if space['name'] == gene['name']), None)
         if gene_variant is None:
             raise ValueError(f'Could not find corresponding gene_space in model_space.\n {[dna2str(gene)]}')
+
+        gene = gene['train']
+        gene_variant = gene_variant['train']
+        if gene is None:
+            continue
 
         # Modify nucleotides slightly but still remain in same gene variant
         for j, nucleotide in enumerate(gene['args']):
@@ -347,32 +269,31 @@ def mutate(organism, model_space, func_prob, nuc_prob, max_disc_shift, max_cont_
                 index = max(0, min(len(nucleotide_space) - 1, index))
                 gene['args'][j] = nucleotide_space[index]
 
+        # Todo what about kwargs?
+
 
 def choose_nucleotides(nucleotide_space):
     nucleotides = {}
-
     if 'args' in nucleotide_space:
         nucleotides['args'] = [round(random.uniform(*arg), 5) if isinstance(arg, tuple) else random.choice(arg)
                                for arg in nucleotide_space['args']]
-
     if 'kwargs' in nucleotide_space:
         nucleotides['kwargs'] = {
             key: round(random.uniform(*value), 5) if isinstance(value, tuple) else random.choice(value)
             for key, value in nucleotide_space['kwargs'].items()
         }
-
     return nucleotides
 
 
 def choose_gene_from_space(gene_space):
+    # choose a random function from supplied choices
     nucleotide_space = random.choice(gene_space)
-    # if different functions for training and inference, pick the training nucleotide space
-    if "train" in nucleotide_space:
-        nucleotide_space = nucleotide_space["train"]
-    nucleotides = choose_nucleotides(nucleotide_space)
-    # add chosen nucleotides to the gene
     gene = deepcopy(nucleotide_space)
-    gene.update(nucleotides)
+    if gene["train"] is None:
+        return gene
+    nucleotides = choose_nucleotides(gene["train"])
+    # add chosen nucleotides to the gene
+    gene['train'].update(nucleotides)
     return gene
 
 

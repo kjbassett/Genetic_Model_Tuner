@@ -1,3 +1,6 @@
+from copy import deepcopy
+
+
 def validate_config(model_space):
     new_model_space = []
     names_seen = {}
@@ -18,7 +21,8 @@ def validate_config(model_space):
 def validate_function_dict(function_dict, names_seen):
     validate_name(function_dict, names_seen)
     function_dict = validate_structure(function_dict)  # Can transform structure
-    validate_info(function_dict)
+    validate_info(function_dict['train'])
+    validate_info(function_dict['inference'])
     return function_dict
 
 
@@ -61,11 +65,13 @@ def validate_structure(function_dict):
         raise ValueError(f"Bad function dictionary config. No 'train', 'inference' or 'func' key found.")
 
     else:  # Only one function provided for training/inference, assume it's for both
-        function_dict = {'train': function_dict, 'inference': function_dict, 'name': function_dict['name']}
+        function_dict = {'train': function_dict, 'inference': deepcopy(function_dict), 'name': function_dict['name']}
     return function_dict
 
 
-def validate_info(, function_dict):
+def validate_info(function_dict):
+    if function_dict is None:
+        return
     if not isinstance(function_dict, dict):
         raise TypeError(f"{function_dict} is not a dictionary.")
     if 'func' not in function_dict:
@@ -95,4 +101,3 @@ def validate_info(, function_dict):
     for value in function_dict['kwargs'].values():
         if not hasattr(value, '__iter__'):
             raise TypeError(f"Value {value} in 'kwargs' value of {function_dict} is not iterable.")
-
