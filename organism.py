@@ -1,4 +1,6 @@
 from copy import deepcopy
+import os
+import json
 
 
 class Organism:
@@ -36,6 +38,22 @@ class Organism:
     def reproduce(self):
         return Organism(deepcopy(self.dna))
 
+    def save(self):
+
+        dna = deepcopy(self.dna)
+        print(dna)
+        # remove 'func' keys from dna
+        for gene in dna:
+            for key in ['train', 'inference']:
+                if gene[key] is None:
+                    continue
+                gene[key].pop('func')
+        print(dna)
+        if not os.path.exists('organisms'):
+            os.makedirs('organisms')
+        with open('organisms/config.json', 'w') as f:
+            json.dump(dna, f, cls=StrEncoder, indent=4)
+
     def reset(self):
         self.score = 0
         self.fitness = 0
@@ -46,8 +64,17 @@ def dna2str(dna):
     dna_str = ''
     for gene in dna:
         dna_str += gene['name'] + '('
-        dna_str += ', '.join([str(a) for a in gene['args']])
-        for key, value in gene['kwargs'].items():
-            dna_str += f', {key}={value}'
+        if gene['train']:
+            dna_str += ', '.join([str(a) for a in gene['train']['args']])
+            for key, value in gene['train']['kwargs'].items():
+                dna_str += f', {key}={value}'
         dna_str += ')'
     return dna_str
+
+
+class StrEncoder(json.JSONEncoder):
+    def default(self, obj):
+        try:
+            return super().default(obj)
+        except TypeError:
+            return str(obj)
