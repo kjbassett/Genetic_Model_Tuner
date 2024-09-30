@@ -5,6 +5,9 @@ def validate_config(model_space):
     new_model_space = []
     names_seen = {}
 
+    if isinstance(model_space, dict): # One choice of function
+        model_space = [model_space]  # Standardize
+
     for gene_space in model_space:
         if isinstance(gene_space, dict):  # only one choice of function
             gene_space = [gene_space]  # Standardize. Could be a list of functions
