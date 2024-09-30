@@ -130,6 +130,26 @@ class TestValidateConfig(unittest.TestCase):
         result = validate_config(model_space)
         self.assertEqual(result, expected_output)
 
+    def test_validate_config_nested_too_deep(self):
+        model_space = [
+            [
+                [
+                    {'name': 'func1', 'func': lambda x: x, 'inputs': 'input1', 'outputs': 'output1'},
+                    {'name': 'func2', 'func': lambda y: y, 'inputs': 'input2', 'outputs': 'output2'}
+                ],
+                [
+                    {'name': 'func3', 'func': lambda z: z, 'inputs': 'input3', 'outputs': 'output3'}
+                ]
+            ],
+            [
+                {'name': 'func4', 'func': lambda a: a, 'inputs': 'input4', 'outputs': 'output4'}
+            ]
+        ]
+        with self.assertRaises(ValueError) as context:
+            validate_config(model_space)
+        print(context.exception)
+        assert "The third layer in should be a dictionary. Got <class 'list'>" in str(context.exception)
+
     def test_validate_config_mixed_list(self):
         model_space = [
             {
@@ -297,13 +317,20 @@ class TestValidateConfig(unittest.TestCase):
             # Missing 'func', 'inputs', 'outputs'
         }
         with self.assertRaises(ValueError) as context:
-            validate_config([model_space])
+            validate_config(model_space)
         self.assertIn("No 'train', 'inference' or 'func' key found.", str(context.exception))
 
     def test_validate_config_raises_error(self):
         model_space = [{'name': 'test_func'}]  # Missing 'func' key to trigger error in validate_function_dict
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ValueError) as context:
             validate_config(model_space)
+        assert "No 'train', 'inference' or 'func' key found." in str(context.exception)
+
+    def test_validate_config_dict_without_name(self):
+        model_space = [{'inputs': 'input', 'outputs': 'output'}]  # Missing 'name' key
+        with self.assertRaises(ValueError) as context:
+            validate_config(model_space)
+        assert "No name provided and no function to pull name from" in str(context.exception)
 
 
 if __name__ == '__main__':
