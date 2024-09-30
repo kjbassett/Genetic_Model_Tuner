@@ -1,6 +1,34 @@
 from copy import deepcopy
 
 
+"""
+1. The outer list holds the whole model space
+2. Each element in the model space represents a step during processing.
+3. The model space's elements are lists.
+4. Those lists hold all the possible choices for that step in the model.
+5. Each choice is a dictionary that contains 'name', 'train', 'inference' keys.
+6. The name is the name of the option. 
+7. Train holds a dictionary with a function, argument choices, kwarg choices, and inputs/outputs.
+8. Inference has the same structure as train.
+9. Train is used during training, inference is used during inference.
+
+If the model space is a single dictionary, assume 1 step with 1 choice.
+If an element in the model space is a dictionary, assume it's a single choice and put it in a list.
+If only train is specified, inference will be skipped 
+If only inference is specified, training will skip this step.
+If the dictionary does not have 'train' or 'inference', 
+    Assume function info in outer dict and copy to nested structure in both train and inference.
+If the dictionary does not have a 'name', try to get it from func.__name__ or func itself if func is a string
+If inputs or outputs are not in lists, put them in lists
+If args not a list, put in list. If kwargs not a dict, put in dict.
+
+
+The model tuner will choose functions and arguments for each step and use the train version for training.
+and the best will survive and repopulate with small mutations.
+After many generations, the best combination of functions and arguments will be saved.
+Based on the saved file, the user can load the inference version of the model for use on new data.
+"""
+
 def validate_config(model_space):
     new_model_space = []
     names_seen = {}
@@ -22,6 +50,8 @@ def validate_config(model_space):
 
 
 def validate_function_dict(function_dict, names_seen):
+    if not isinstance(function_dict, dict):
+        raise ValueError("The third layer in should be a dictionary. Got " + str(type(function_dict)))
     validate_name(function_dict, names_seen)
     function_dict = validate_structure(function_dict)  # Can transform structure
     validate_info(function_dict['train'])
@@ -40,7 +70,7 @@ def validate_name(function_dict, names_seen):
                 function_dict['name'] = function_dict['func']
         else:
             raise ValueError(
-                "If you have different functions for training and inference, you have to provide a name."
+                "No name provided and no function to pull name from."
             )
     # If multiple function dicts with the same name, add counter to name to make it unique
     if function_dict['name'] in names_seen:
