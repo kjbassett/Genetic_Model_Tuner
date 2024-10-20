@@ -60,11 +60,11 @@ class TestValidateConfig(unittest.TestCase):
     def test_pipeline_step_with_multiple_function_choices(self):
         model_space = [
             [
-                {'name': 'step1', 'func': 'func1', 'inputs': 'input1', 'outputs': 'output1'},
-                {'name': 'step2', 'func': 'func2', 'inputs': ['input2'], 'outputs': ['output2']}
+                {'name': 'step1', 'func': lambda x: x, 'inputs': 'input1', 'outputs': 'output1'},
+                {'name': 'step2', 'func': lambda x: x, 'inputs': ['input2'], 'outputs': ['output2']}
             ],
             [
-                {'name': 'step3', 'func': 'func3', 'inputs': 'input3', 'outputs': 'output3'}
+                {'name': 'step3', 'func': lambda x: x, 'inputs': 'input3', 'outputs': 'output3'}
             ]
         ]
 
@@ -269,6 +269,80 @@ class TestValidateConfig(unittest.TestCase):
 
         with self.assertRaises(TypeError):
             validate_config(model_space)
+
+    def test_func_as_reference_to_previous_step_output(self):
+        model_space = [
+            {'name': 'step1', 'func': lambda x: x + 1, 'inputs': 'input', 'outputs': 'step1_output'},
+            {'name': 'step2', 'func': 'step1_output', 'inputs': 'step1_output', 'outputs': 'step2_output'}
+        ]
+
+        result = validate_config(model_space)
+        assert 'train' in result[1][0]
+        assert result[1][0]['train']['func'] == 'step1_output'
+        assert result[1][0]['train']['inputs'] == ['step1_output']
+
+    def test_func_reference_valid_with_multiple_previous_outputs(self):
+        model_space = [
+            {'name': 'step1', 'func': lambda x: x + 1, 'inputs': 'input',
+             'outputs': ['step1_output1', 'step1_output2']},
+            {'name': 'step2', 'func': 'step1_output2', 'inputs': 'step1_output2', 'outputs': 'step2_output'}
+        ]
+
+        result = validate_config(model_space)
+        assert 'train' in result[1][0]
+        assert result[1][0]['train']['func'] == 'step1_output2'
+        assert result[1][0]['train']['inputs'] == ['step1_output2']
+
+    def test_func_reference_raises_error_if_no_match_in_previous_outputs(self):
+        model_space = [
+            {'name': 'step1', 'func': lambda x: x + 1, 'inputs': 'input',
+             'outputs': ['step1_output1', 'step1_output2']},
+            {'name': 'step2', 'func': 'non_existent_output', 'inputs': 'step1_output1', 'outputs': 'step2_output'}
+        ]
+
+        with self.assertRaises(ValueError) as context:
+            validate_config(model_space)
+        assert "Function reference 'non_existent_output' not found in any previous outputs" in str(context.exception)
+
+    def test_valid_configuration_with_func_as_callable_or_reference(self):
+        model_space = [
+            {'name': 'step1', 'func': lambda x: x + 1, 'inputs': 'input', 'outputs': 'step1_output'},
+            {'name': 'step2', 'func': 'step1_output', 'inputs': 'step1_output', 'outputs': 'step2_output'},
+            {'name': 'step3', 'func': lambda y: y * 2, 'inputs': 'step2_output', 'outputs': 'step3_output'}
+        ]
+
+        result = validate_config(model_space)
+        assert result[1][0]['train']['func'] == 'step1_output'
+        assert result[2][0]['train']['func'].__name__ == (lambda y: y * 2).__name__
+
+    def test_single_level_nested_structure(self):
+        model_space = [
+            [
+                {'name': 'step1', 'func': lambda x: x, 'inputs': 'input1', 'outputs': 'output1'},
+                {'name': 'step2', 'func': lambda x: x * 2, 'inputs': 'input2', 'outputs': 'output2'}
+            ],
+            [
+                {'name': 'step3', 'func': lambda x: x + 1, 'inputs': 'input3', 'outputs': 'output3'}
+            ]
+        ]
+
+        result = validate_config(model_space)
+        assert result[0][0]['train']['inputs'] == ['input1']
+        assert result[0][0]['train']['outputs'] == ['output1']
+        assert result[1][0]['train']['inputs'] == ['input3']
+
+    def test_raises_error_on_too_deep_nesting_corrected(self):
+        model_space = [
+            [
+                [
+                    {'name': 'func1', 'func': lambda x: x, 'inputs': 'input1', 'outputs': 'output1'},
+                ]
+            ]
+        ]
+
+        with self.assertRaises(ValueError) as context:
+            validate_config(model_space)
+        assert "The third layer in should be a dictionary. Got <class 'list'>" in str(context.exception)
 
     def test_continuous_range_valid(self):
         range1 = ContinuousRange(0, 10)

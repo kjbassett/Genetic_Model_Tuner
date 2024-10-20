@@ -22,6 +22,7 @@ class ContinuousRange:
 def validate_config(model_space):
     new_model_space = []
     names_seen = {}
+    previous_outputs = set()  # To track the outputs seen so far
 
     if isinstance(model_space, dict): # One choice of function
         model_space = [model_space]  # Standardize
@@ -32,20 +33,23 @@ def validate_config(model_space):
 
         new_gene_space = []
         for function_dict in gene_space:
-            function_dict = validate_function_dict(function_dict, names_seen)
+            function_dict = validate_function_dict(function_dict, names_seen, previous_outputs)
             new_gene_space.append(function_dict)
+            # Add the current step's outputs to previous_outputs for future reference
+            previous_outputs.update(function_dict['train']['outputs'])
+            previous_outputs.update(function_dict['inference']['outputs'])
         new_model_space.append(new_gene_space)
 
     return new_model_space
 
 
-def validate_function_dict(function_dict, names_seen):
+def validate_function_dict(function_dict, names_seen, previous_outputs):
     if not isinstance(function_dict, dict):
         raise ValueError("The third layer in should be a dictionary. Got " + str(type(function_dict)))
     validate_name(function_dict, names_seen)
     function_dict = validate_structure(function_dict)  # Can transform structure
-    validate_info(function_dict['train'])
-    validate_info(function_dict['inference'])
+    validate_info(function_dict['train'], previous_outputs)
+    validate_info(function_dict['inference'], previous_outputs)
     return function_dict
 
 
@@ -92,15 +96,20 @@ def validate_structure(function_dict):
     return function_dict
 
 
-def validate_info(function_dict):
+def validate_info(function_dict, previous_outputs):
     if function_dict is None:
         return
     if not isinstance(function_dict, dict):
         raise TypeError(f"{function_dict} is not a dictionary.")
     if 'func' not in function_dict:
         raise ValueError(f"No 'func' key found in {function_dict}.")
-    if not callable(function_dict['func']) and not isinstance(function_dict['func'], str):
-        raise TypeError(f"'func' value in {function_dict} is not callable or string.")
+
+    # Check if 'func' is a string and validate it against previous outputs
+    if isinstance(function_dict['func'], str):
+        if function_dict['func'] not in previous_outputs:
+            raise ValueError(f"Function reference '{function_dict['func']}' not found in any previous outputs.")
+    elif not callable(function_dict['func']):
+        raise TypeError(f"'func' value in {function_dict} is not callable or a valid string reference.")
 
     # Validate inputs and outputs
     function_dict['inputs'] = validate_io(function_dict.get('inputs', []), 'inputs')

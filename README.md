@@ -45,6 +45,7 @@ Gene space i holds all the possible configurations for step i in the pipeline.
     The state while running the tuner will include 'some_name': x after that step. 
 9. The list of values in the 'input' key tells the model tuner to get a value by name from the state and use them as args
     In other words, a previous step's output can the current step's input
+10. The 'func' key can be a string that corresponds to a key in the state, meaning that a previous step can output a function for a future step.
 </details>
 
 You (the user) can take some shortcuts when defining the model space.
