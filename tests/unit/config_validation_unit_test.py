@@ -214,7 +214,7 @@ class TestValidateConfig(unittest.TestCase):
 
         with self.assertRaises(TypeError) as context:
             validate_config(model_space)
-        assert "'inputs' value in" in str(context.exception)
+        assert "'inputs' must be a string or a list" in str(context.exception)
 
     def test_invalid_non_iterable_outputs_raises_error(self):
         model_space = {
@@ -225,7 +225,7 @@ class TestValidateConfig(unittest.TestCase):
 
         with self.assertRaises(TypeError) as context:
             validate_config(model_space)
-        assert "'outputs' value in" in str(context.exception)
+        assert "'outputs' must be a string or a list" in str(context.exception)
 
     def test_valid_args_with_continuous_range(self):
         model_space = {
@@ -285,6 +285,7 @@ class TestValidateConfig(unittest.TestCase):
             ContinuousRange(10, 5)  # Invalid: start > end
         with self.assertRaises(ValueError):
             ContinuousRange('a', 'b')  # Invalid: non-numeric values
+
 
 if __name__ == '__main__':
     unittest.main()
