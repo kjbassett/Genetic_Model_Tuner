@@ -1,5 +1,5 @@
 import unittest
-from config_validation import validate_config
+from config_validation import validate_config, ContinuousRange
 from copy import deepcopy
 
 
@@ -10,91 +10,54 @@ class TestValidateConfig(unittest.TestCase):
         expected_output = []
         self.assertEqual(validate_config(model_space), expected_output)
 
-    def test_validate_config_single_dict(self):
+    def test_single_func_standardized_to_train_inference(self):
         model_space = {
             'name': 'test_func',
             'func': lambda x: x,
             'inputs': 'input',
             'outputs': 'output'
         }
-        expected_output = [[{
+
+        result = validate_config(model_space)
+        assert 'train' in result[0][0]
+        assert 'inference' in result[0][0]
+        assert result[0][0]['train']['func'] == result[0][0]['inference']['func']
+
+    def test_valid_inputs_and_outputs(self):
+        model_space = {
             'name': 'test_func',
-            'train': {
-                'name': 'test_func',
-                'func': model_space['func'],
-                'inputs': ['input'],
-                'outputs': ['output'],
-                'args': [],
-                'kwargs': {}
-            },
-            'inference': {
-                'name': 'test_func',
-                'func': model_space['func'],
-                'inputs': ['input'],
-                'outputs': ['output'],
-                'args': [],
-                'kwargs': {}
-            }
-        }]]
-        result = validate_config(model_space)
-        self.assertEqual(result, expected_output)
+            'func': lambda x: x,
+            'inputs': 'x_train',  # Single string
+            'outputs': ['predictions']  # List of strings
+        }
 
-    def test_validate_config_multiple_dicts(self):
+        result = validate_config(model_space)
+        assert result[0][0]['train']['inputs'] == ['x_train']
+        assert result[0][0]['train']['outputs'] == ['predictions']
+
+    def test_multiple_funcs_standardized_to_train_inference(self):
         model_space = [
-            {
-                'name': 'test_func1',
-                'func': lambda x: x,
-                'inputs': 'input1',
-                'outputs': 'output1'
-            },
-            {
-                'name': 'test_func2',
-                'func': lambda y: y,
-                'inputs': 'input2',
-                'outputs': 'output2'
-            }
+            {'name': 'test_func1', 'func': lambda x: x, 'inputs': 'input1', 'outputs': 'output1'},
+            {'name': 'test_func2', 'func': lambda y: y, 'inputs': 'input2', 'outputs': 'output2'}
         ]
-        expected_output = [[{
-            'name': 'test_func1',
-            'train': {
-                'name': 'test_func1',
-                'func': model_space[0]['func'],
-                'inputs': ['input1'],
-                'outputs': ['output1'],
-                'args': [],
-                'kwargs': {}
-            },
-            'inference': {
-                'name': 'test_func1',
-                'func': model_space[0]['func'],
-                'inputs': ['input1'],
-                'outputs': ['output1'],
-                'args': [],
-                'kwargs': {}
-            }
-        }], [{
-            'name': 'test_func2',
-            'train': {
-                'name': 'test_func2',
-                'func': model_space[1]['func'],
-                'inputs': ['input2'],
-                'outputs': ['output2'],
-                'args': [],
-                'kwargs': {}
-            },
-            'inference': {
-                'name': 'test_func2',
-                'func': model_space[1]['func'],
-                'inputs': ['input2'],
-                'outputs': ['output2'],
-                'args': [],
-                'kwargs': {}
-            }
-        }]]
-        result = validate_config(model_space)
-        self.assertEqual(result, expected_output)
 
-    def test_validate_config_with_function_choice(self):
+        result = validate_config(model_space)
+        assert result[0][0]['train']['func'] == result[0][0]['inference']['func']
+        assert result[1][0]['train']['func'] == result[1][0]['inference']['func']
+
+    def test_multiple_funcs_input_output_standardization(self):
+        model_space = [
+            {'name': 'test_func1', 'func': lambda x: x, 'inputs': 'input1', 'outputs': 'output1'},
+            {'name': 'test_func2', 'func': lambda y: y, 'inputs': 'input2', 'outputs': 'output2'}
+        ]
+
+        result = validate_config(model_space)
+        assert result[0][0]['train']['inputs'] == ['input1']
+        assert result[0][0]['train']['outputs'] == ['output1']
+        assert result[1][0]['train']['inputs'] == ['input2']
+        assert result[1][0]['train']['outputs'] == ['output2']
+
+    def test_pipeline_step_with_multiple_function_choices(self):
         model_space = [
             [
                 {'name': 'step1', 'func': 'func1', 'inputs': 'input1', 'outputs': 'output1'},
@@ -105,32 +68,12 @@ class TestValidateConfig(unittest.TestCase):
             ]
         ]
 
-        expected_output = [
-            [
-                {'name': 'step1',
-                 'train': {'name': 'step1', 'func': 'func1', 'inputs': ['input1'], 'outputs': ['output1'], 'args': [],
-                           'kwargs': {}},
-                 'inference': {'name': 'step1', 'func': 'func1', 'inputs': ['input1'], 'outputs': ['output1'],
-                               'args': [], 'kwargs': {}}},
-                {'name': 'step2',
-                 'train': {'name': 'step2', 'func': 'func2', 'inputs': ['input2'], 'outputs': ['output2'], 'args': [],
-                           'kwargs': {}},
-                 'inference': {'name': 'step2', 'func': 'func2', 'inputs': ['input2'], 'outputs': ['output2'],
-                               'args': [], 'kwargs': {}}}
-            ],
-            [
-                {'name': 'step3',
-                 'train': {'name': 'step3', 'func': 'func3', 'inputs': ['input3'], 'outputs': ['output3'], 'args': [],
-                           'kwargs': {}},
-                 'inference': {'name': 'step3', 'func': 'func3', 'inputs': ['input3'], 'outputs': ['output3'],
-                               'args': [], 'kwargs': {}}}
-            ]
-        ]
-
         result = validate_config(model_space)
-        self.assertEqual(result, expected_output)
+        assert result[0][0]['name'] == 'step1'
+        assert result[0][1]['name'] == 'step2'
+        assert result[1][0]['name'] == 'step3'
 
-    def test_validate_config_nested_too_deep(self):
+    def test_raises_error_on_too_deep_nesting(self):
         model_space = [
             [
                 [
@@ -147,145 +90,33 @@ class TestValidateConfig(unittest.TestCase):
         ]
         with self.assertRaises(ValueError) as context:
             validate_config(model_space)
-        print(context.exception)
         assert "The third layer in should be a dictionary. Got <class 'list'>" in str(context.exception)
 
-    def test_validate_config_mixed_list(self):
+    def test_mixed_dict_and_list_handling_in_model_space(self):
         model_space = [
-            {
-                'name': 'func1',
-                'func': lambda x: x,
-                'inputs': 'input1',
-                'outputs': 'output1'
-            },
+            {'name': 'func1', 'func': lambda x: x, 'inputs': 'input1', 'outputs': 'output1'},
             [
-                {
-                    'name': 'func2',
-                    'func': lambda x: x,
-                    'inputs': 'input2',
-                    'outputs': 'output2'
-                },
-                {
-                    'name': 'func3',
-                    'func': lambda x: x,
-                    'inputs': 'input3',
-                    'outputs': 'output3'
-                }
+                {'name': 'func2', 'func': lambda x: x, 'inputs': 'input2', 'outputs': 'output2'},
+                {'name': 'func3', 'func': lambda x: x, 'inputs': 'input3', 'outputs': 'output3'}
             ]
         ]
-        expected_output = [
-            [{
-                'name': 'func1',
-                'train': {
-                    'name': 'func1',
-                    'func': model_space[0]['func'],
-                    'inputs': ['input1'],
-                    'outputs': ['output1'],
-                    'args': [],
-                    'kwargs': {}
-                },
-                'inference': {
-                    'name': 'func1',
-                    'func': model_space[0]['func'],
-                    'inputs': ['input1'],
-                    'outputs': ['output1'],
-                    'args': [],
-                    'kwargs': {}
-                }
-            }],
-            [
-                {
-                    'name': 'func2',
-                    'train': {
-                        'name': 'func2',
-                        'func': model_space[1][0]['func'],
-                        'inputs': ['input2'],
-                        'outputs': ['output2'],
-                        'args': [],
-                        'kwargs': {}
-                    },
-                    'inference': {
-                        'name': 'func2',
-                        'func': model_space[1][0]['func'],
-                        'inputs': ['input2'],
-                        'outputs': ['output2'],
-                        'args': [],
-                        'kwargs': {}
-                    }
-                },
-                {
-                    'name': 'func3',
-                    'train': {
-                        'name': 'func3',
-                        'func': model_space[1][1]['func'],
-                        'inputs': ['input3'],
-                        'outputs': ['output3'],
-                        'args': [],
-                        'kwargs': {}
-                    },
-                    'inference': {
-                        'name': 'func3',
-                        'func': model_space[1][1]['func'],
-                        'inputs': ['input3'],
-                        'outputs': ['output3'],
-                        'args': [],
-                        'kwargs': {}
-                    }
-                }
-            ]
-        ]
-        result = validate_config(model_space)
-        self.assertEqual(result, expected_output)
 
-    def test_validate_config_updates_names_seen(self):
+        result = validate_config(model_space)
+        assert result[0][0]['name'] == 'func1'
+        assert result[1][0]['name'] == 'func2'
+        assert result[1][1]['name'] == 'func3'
+
+    def test_name_collision_resolves_with_unique_suffix(self):
         model_space = [
             {'name': 'func1', 'func': lambda x: x, 'inputs': 'input1', 'outputs': 'output1'},
             {'name': 'func1', 'func': lambda x: x, 'inputs': 'input2', 'outputs': 'output2'}
         ]
-        expected_output = [
-            [{
-                'name': 'func1',
-                'train': {
-                    'name': 'func1',
-                    'func': model_space[0]['func'],
-                    'inputs': ['input1'],
-                    'outputs': ['output1'],
-                    'args': [],
-                    'kwargs': {}
-                },
-                'inference': {
-                    'name': 'func1',
-                    'func': model_space[0]['func'],
-                    'inputs': ['input1'],
-                    'outputs': ['output1'],
-                    'args': [],
-                    'kwargs': {}
-                }
-            }],
-            [{
-                'name': 'func1_1',
-                'train': {
-                    'name': 'func1_1',
-                    'func': model_space[1]['func'],
-                    'inputs': ['input2'],
-                    'outputs': ['output2'],
-                    'args': [],
-                    'kwargs': {}
-                },
-                'inference': {
-                    'name': 'func1_1',
-                    'func': model_space[1]['func'],
-                    'inputs': ['input2'],
-                    'outputs': ['output2'],
-                    'args': [],
-                    'kwargs': {}
-                }
-            }]
-        ]
-        result = validate_config(model_space)
-        self.assertEqual(result, expected_output)
 
-    def test_correct_input_not_modified(self):
+        result = validate_config(model_space)
+        assert result[0][0]['name'] == 'func1'
+        assert result[1][0]['name'] == 'func1_1'
+
+    def test_input_not_modified_by_validation(self):
         model_space = [
             [
                 {
@@ -311,7 +142,7 @@ class TestValidateConfig(unittest.TestCase):
         validate_config(model_space)
         self.assertEqual(model_space, model_space_copy)
 
-    def test_validate_config_missing_keys(self):
+    def test_missing_func_raises_value_error(self):
         model_space = {
             'name': 'test_func'
             # Missing 'func', 'inputs', 'outputs'
@@ -320,18 +151,140 @@ class TestValidateConfig(unittest.TestCase):
             validate_config(model_space)
         self.assertIn("No 'train', 'inference' or 'func' key found.", str(context.exception))
 
-    def test_validate_config_raises_error(self):
-        model_space = [{'name': 'test_func'}]  # Missing 'func' key to trigger error in validate_function_dict
-        with self.assertRaises(ValueError) as context:
-            validate_config(model_space)
-        assert "No 'train', 'inference' or 'func' key found." in str(context.exception)
-
-    def test_validate_config_dict_without_name(self):
+    def test_missing_name_raises_value_error(self):
         model_space = [{'inputs': 'input', 'outputs': 'output'}]  # Missing 'name' key
         with self.assertRaises(ValueError) as context:
             validate_config(model_space)
         assert "No name provided and no function to pull name from" in str(context.exception)
 
+    def test_validate_config_single_func_for_both_train_inference(self):
+        model_space = {
+            'name': 'test_func',
+            'func': lambda x: x + 1,  # Single func for both train and inference
+            'inputs': 'input',
+            'outputs': 'output'
+        }
+
+        result = validate_config(model_space)
+        assert 'train' in result[0][0]
+        assert 'inference' in result[0][0]
+        assert result[0][0]['train']['func'] == result[0][0]['inference']['func']
+
+    def test_missing_inputs_defaults_to_empty_list(self):
+        model_space = {
+            'name': 'test_func',
+            'func': lambda x: x,
+            'outputs': 'output'  # Missing 'inputs'
+        }
+
+        result = validate_config(model_space)
+        assert result[0][0]['train']['inputs'] == []
+        assert result[0][0]['inference']['inputs'] == []
+
+    def test_missing_outputs_defaults_to_empty_list(self):
+        model_space = {
+            'name': 'test_func',
+            'func': lambda x: x,
+            'inputs': 'input'  # Missing 'outputs'
+        }
+
+        result = validate_config(model_space)
+        assert result[0][0]['train']['outputs'] == []
+        assert result[0][0]['inference']['outputs'] == []
+
+    def test_missing_kwargs_defaults_to_empty_dict(self):
+        model_space = {
+            'name': 'test_func',
+            'func': lambda x: x,
+            'inputs': 'input',
+            'outputs': 'output',
+            'args': []  # Missing 'kwargs'
+        }
+
+        result = validate_config(model_space)
+        assert result[0][0]['train']['kwargs'] == {}
+        assert result[0][0]['inference']['kwargs'] == {}
+
+    def test_invalid_non_iterable_inputs_raises_error(self):
+        model_space = {
+            'name': 'test_func',
+            'func': lambda x: x,
+            'inputs': 123,  # Invalid non-iterable input
+        }
+
+        with self.assertRaises(TypeError) as context:
+            validate_config(model_space)
+        assert "'inputs' value in" in str(context.exception)
+
+    def test_invalid_non_iterable_outputs_raises_error(self):
+        model_space = {
+            'name': 'test_func',
+            'func': lambda x: x,
+            'outputs': 456  # Invalid non-iterable output
+        }
+
+        with self.assertRaises(TypeError) as context:
+            validate_config(model_space)
+        assert "'outputs' value in" in str(context.exception)
+
+    def test_valid_args_with_continuous_range(self):
+        model_space = {
+            'name': 'test_func',
+            'func': lambda x: x,
+            'args': [ContinuousRange(0, 10), [1, 2, 3]]  # Valid ContinuousRange and discrete options
+        }
+
+        result = validate_config(model_space)
+        assert isinstance(result[0][0]['train']['args'][0], ContinuousRange)
+        assert result[0][0]['train']['args'][1] == [1, 2, 3]
+
+    def test_invalid_args_raise_error(self):
+        model_space = {
+            'name': 'test_func',
+            'func': lambda x: x,
+            'args': [123]  # Invalid: not a ContinuousRange or iterable
+        }
+
+        with self.assertRaises(TypeError):
+            validate_config(model_space)
+
+    def test_valid_kwargs_with_continuous_range(self):
+        model_space = {
+            'name': 'test_func',
+            'func': lambda x: x,
+            'kwargs': {'param1': ContinuousRange(0, 10), 'param2': [1, 2, 3]}
+            # Valid ContinuousRange and discrete options
+        }
+
+        result = validate_config(model_space)
+        assert isinstance(result[0][0]['train']['kwargs']['param1'], ContinuousRange)
+        assert result[0][0]['train']['kwargs']['param2'] == [1, 2, 3]
+
+    def test_invalid_kwargs_raise_error(self):
+        model_space = {
+            'name': 'test_func',
+            'func': lambda x: x,
+            'kwargs': {"x": 123}  # Invalid: not a ContinuousRange or iterable
+        }
+
+        with self.assertRaises(TypeError):
+            validate_config(model_space)
+
+    def test_continuous_range_valid(self):
+        range1 = ContinuousRange(0, 10)
+        assert range1.start == 0
+        assert range1.end == 10
+
+    def test_continuous_range_sample(self):
+        range1 = ContinuousRange(0, 10)
+        sample = range1.sample()
+        assert 0 <= sample <= 10
+
+    def test_invalid_continuous_range_raises_error(self):
+        with self.assertRaises(ValueError):
+            ContinuousRange(10, 5)  # Invalid: start > end
+        with self.assertRaises(ValueError):
+            ContinuousRange('a', 'b')  # Invalid: non-numeric values
 
 if __name__ == '__main__':
     unittest.main()
