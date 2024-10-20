@@ -1,4 +1,22 @@
 from copy import deepcopy
+import random
+
+
+class ContinuousRange:
+    def __init__(self, start, end):
+        if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+            raise ValueError(f"Start and end values for ContinuousRange must be numeric. Got {start}, {end}")
+        if start >= end:
+            raise ValueError(f"Start value must be less than end value. Got start={start} and end={end}")
+        self.start = start
+        self.end = end
+
+    def __repr__(self):
+        return f"ContinuousRange({self.start}, {self.end})"
+
+    def sample(self):
+        """Sample a random value from the continuous range."""
+        return random.uniform(self.start, self.end)
 
 
 def validate_config(model_space):
@@ -83,26 +101,59 @@ def validate_info(function_dict):
         raise ValueError(f"No 'func' key found in {function_dict}.")
     if not callable(function_dict['func']) and not isinstance(function_dict['func'], str):
         raise TypeError(f"'func' value in {function_dict} is not callable or string.")
-    for io in ('inputs', 'outputs'):
-        if io not in function_dict:
-            function_dict[io] = []
-            continue
-        if isinstance(function_dict[io], str):
-            function_dict[io] = [function_dict[io]]  # standardize
-        if not hasattr(function_dict[io], '__iter__'):
-            raise TypeError(f"'{io}' value in {function_dict} is not iterable.")
-    if 'args' not in function_dict:
-        function_dict['args'] = []
-    else:
-        if not isinstance(function_dict['args'], list):
-            raise TypeError(f"'args' value in {function_dict} is not a list.")
-        for arg in function_dict['args']:
-            if not hasattr(arg, '__iter__'):
-                raise TypeError(f"Argument {arg} in 'args' value of {function_dict} is not iterable.")
-    if 'kwargs' not in function_dict:
-        function_dict['kwargs'] = dict()
-    if not isinstance(function_dict['kwargs'], dict):
-        raise TypeError(f"'kwargs' value in {function_dict} is not a dictionary.")
-    for value in function_dict['kwargs'].values():
-        if not hasattr(value, '__iter__'):
-            raise TypeError(f"Value {value} in 'kwargs' value of {function_dict} is not iterable.")
+
+    # Validate inputs and outputs
+    function_dict['inputs'] = validate_io(function_dict.get('inputs', []), 'inputs')
+    function_dict['outputs'] = validate_io(function_dict.get('outputs', []), 'outputs')
+
+    # Validate args and kwargs
+    function_dict['args'] = validate_args(function_dict.get('args', []))
+    function_dict['kwargs'] = validate_kwargs(function_dict.get('kwargs', {}))
+
+    return function_dict
+
+
+def validate_io(io_list, io_type):
+    if isinstance(io_list, str):
+        io_list = [io_list]  # Wrap single string into a list
+    if not isinstance(io_list, list):
+        raise TypeError(f"'{io_type}' must be a string or a list.")
+
+    # Validate that all elements in the list are strings
+    for element in io_list:
+        if not isinstance(element, str):
+            raise TypeError(f"Each element in '{io_type}' must be a string. Invalid element: {element}")
+
+    return io_list
+
+
+def validate_args(args_list):
+    if not isinstance(args_list, list):
+        raise TypeError(f"'args' must be a list.")
+
+    for arg in args_list:
+        if isinstance(arg, ContinuousRange):
+            continue  # Valid if it's a ContinuousRange
+        elif hasattr(arg, '__iter__'):
+            continue  # Valid if it's an iterable (discrete options)
+        else:
+            raise TypeError(f"Each element in 'args' must be a ContinuousRange or an iterable. Invalid element: {arg}")
+
+    return args_list
+
+
+def validate_kwargs(kwargs_dict):
+    if not isinstance(kwargs_dict, dict):
+        raise TypeError(f"'kwargs' must be a dictionary.")
+
+    for key, value in kwargs_dict.items():
+        if isinstance(value, ContinuousRange):
+            continue  # Valid if it's a ContinuousRange
+        elif hasattr(value, '__iter__'):
+            continue  # Valid if it's an iterable (discrete options)
+        else:
+            raise TypeError(
+                f"Each value in 'kwargs' must be a ContinuousRange or an iterable. Invalid element: {value}")
+
+    return kwargs_dict
+
