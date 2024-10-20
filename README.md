@@ -52,18 +52,19 @@ Config validation will not only validate the config but also fix your shortcuts 
 Here is the logic it uses to do that.
 
 <details>
-If the model space is a single dictionary, assume the whole pipeline is 1 step with 1 option.
-If an element in the model space list is a dictionary, assume it's a single choice and put it in a list,
-In a gene option, if only train is specified, the inference key will be created with a value of None. 
-Vice versa if only inference is specified.
-If the dictionary does not have 'train' or 'inference', 
-    Assume the same configuration for both train or inference.
+
+* If the model space is a single dictionary, assume the whole pipeline is 1 step with 1 option.
+* If an element in the model space list is a dictionary, assume it's a single choice and put it in a list,
+* In a gene option, if only train is specified, the inference key will be created with a value of None. 
+* Vice versa if only inference is specified.
+* If the dictionary does not have 'train' or 'inference', 
+    assume the same configuration for both train or inference.
     Copy the dict into the normal nested structure in both train and inference keys.
-If the dictionary does not have a 'name', try to get it from func.__name__ or func itself if func is a string
-If inputs is not in a list, put it in a list. Same for output
-If intputs or outputs keys are not present, create them with empty lists as values.
-If args not a list, put in list. If kwargs not a dict, put in dict.
-If the args/kwargs keys aren't present, they are created with an empty list/dict as their values.
+* If the dictionary does not have a 'name', try to get it from func.__name__ or func itself if func is a string
+* If inputs is not in a list, put it in a list. Same for output
+* If intputs or outputs keys are not present, create them with empty lists as values.
+* If args not a list, put in list. If kwargs not a dict, put in dict.
+* If the args/kwargs keys aren't present, they are created with an empty list/dict as their values.
 </details>
 
 Here is an example of a pipeline with 1 step that can either be logistic regression or ridge regressuib:
