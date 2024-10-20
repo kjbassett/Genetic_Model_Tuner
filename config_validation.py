@@ -19,10 +19,14 @@ class ContinuousRange:
         return random.uniform(self.start, self.end)
 
 
+# List of valid inputs provided by the model tuner at the beginning of optimization
+PREDEFINED_INPUTS = {"x_train", "x_test", "y_train", "y_test"}
+
+
 def validate_config(model_space):
     new_model_space = []
     names_seen = {}
-    previous_outputs = set()  # To track the outputs seen so far
+    previous_outputs = set(PREDEFINED_INPUTS)  # To track the outputs seen so far
 
     if isinstance(model_space, dict): # One choice of function
         model_space = [model_space]  # Standardize
@@ -112,7 +116,7 @@ def validate_info(function_dict, previous_outputs):
         raise TypeError(f"'func' value in {function_dict} is not callable or a valid string reference.")
 
     # Validate inputs and outputs
-    function_dict['inputs'] = validate_io(function_dict.get('inputs', []), 'inputs')
+    function_dict['inputs'] = validate_io(function_dict.get('inputs', []), 'inputs', previous_outputs)
     function_dict['outputs'] = validate_io(function_dict.get('outputs', []), 'outputs')
 
     # Validate args and kwargs
@@ -122,7 +126,7 @@ def validate_info(function_dict, previous_outputs):
     return function_dict
 
 
-def validate_io(io_list, io_type):
+def validate_io(io_list, io_type, previous_outputs=None):
     if isinstance(io_list, str):
         io_list = [io_list]  # Wrap single string into a list
     if not isinstance(io_list, list):
@@ -132,6 +136,12 @@ def validate_io(io_list, io_type):
     for element in io_list:
         if not isinstance(element, str):
             raise TypeError(f"Each element in '{io_type}' must be a string. Invalid element: {element}")
+
+        # If we're validating inputs, ensure they are valid previous outputs or predefined inputs
+        if io_type == 'inputs' and previous_outputs is not None:
+            if element not in previous_outputs:
+                raise ValueError(f"Input '{element}' is not a valid previous output or a predefined input "
+                                 f"('x_train', 'x_test', 'y_train', 'y_test').")
 
     return io_list
 

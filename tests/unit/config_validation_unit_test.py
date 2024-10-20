@@ -14,14 +14,14 @@ class TestValidateConfig(unittest.TestCase):
         model_space = {
             'name': 'test_func',
             'func': lambda x: x,
-            'inputs': 'input',
+            'inputs': 'x_train',
             'outputs': 'output'
         }
 
         result = validate_config(model_space)
         assert 'train' in result[0][0]
         assert 'inference' in result[0][0]
-        assert result[0][0]['train']['func'] == result[0][0]['inference']['func']
+        assert result[0][0]['train']['func'] == result[0][0]['inference']['func'] == model_space['func']
 
     def test_valid_inputs_and_outputs(self):
         model_space = {
@@ -37,8 +37,8 @@ class TestValidateConfig(unittest.TestCase):
 
     def test_multiple_funcs_standardized_to_train_inference(self):
         model_space = [
-            {'name': 'test_func1', 'func': lambda x: x, 'inputs': 'input1', 'outputs': 'output1'},
-            {'name': 'test_func2', 'func': lambda y: y, 'inputs': 'input2', 'outputs': 'output2'}
+            {'name': 'test_func1', 'func': lambda x: x, 'inputs': 'x_train', 'outputs': 'output1'},
+            {'name': 'test_func2', 'func': lambda y: y, 'inputs': 'x_train', 'outputs': 'output2'}
         ]
 
         result = validate_config(model_space)
@@ -47,24 +47,24 @@ class TestValidateConfig(unittest.TestCase):
 
     def test_multiple_funcs_input_output_standardization(self):
         model_space = [
-            {'name': 'test_func1', 'func': lambda x: x, 'inputs': 'input1', 'outputs': 'output1'},
-            {'name': 'test_func2', 'func': lambda y: y, 'inputs': 'input2', 'outputs': 'output2'}
+            {'name': 'test_func1', 'func': lambda x: x, 'inputs': 'x_train', 'outputs': 'output1'},
+            {'name': 'test_func2', 'func': lambda y: y, 'inputs': 'x_train', 'outputs': 'output2'}
         ]
 
         result = validate_config(model_space)
-        assert result[0][0]['train']['inputs'] == ['input1']
+        assert result[0][0]['train']['inputs'] == ['x_train']
         assert result[0][0]['train']['outputs'] == ['output1']
-        assert result[1][0]['train']['inputs'] == ['input2']
+        assert result[1][0]['train']['inputs'] == ['x_train']
         assert result[1][0]['train']['outputs'] == ['output2']
 
     def test_pipeline_step_with_multiple_function_choices(self):
         model_space = [
             [
-                {'name': 'step1', 'func': lambda x: x, 'inputs': 'input1', 'outputs': 'output1'},
-                {'name': 'step2', 'func': lambda x: x, 'inputs': ['input2'], 'outputs': ['output2']}
+                {'name': 'step1', 'func': lambda x: x, 'inputs': 'x_train', 'outputs': 'output1'},
+                {'name': 'step2', 'func': lambda x: x, 'inputs': ['x_train'], 'outputs': ['output2']}
             ],
             [
-                {'name': 'step3', 'func': lambda x: x, 'inputs': 'input3', 'outputs': 'output3'}
+                {'name': 'step3', 'func': lambda x: x, 'inputs': 'x_train', 'outputs': 'output3'}
             ]
         ]
 
@@ -77,15 +77,15 @@ class TestValidateConfig(unittest.TestCase):
         model_space = [
             [
                 [
-                    {'name': 'func1', 'func': lambda x: x, 'inputs': 'input1', 'outputs': 'output1'},
-                    {'name': 'func2', 'func': lambda y: y, 'inputs': 'input2', 'outputs': 'output2'}
+                    {'name': 'func1', 'func': lambda x: x, 'inputs': 'x_train', 'outputs': 'output1'},
+                    {'name': 'func2', 'func': lambda y: y, 'inputs': 'x_train', 'outputs': 'output2'}
                 ],
                 [
-                    {'name': 'func3', 'func': lambda z: z, 'inputs': 'input3', 'outputs': 'output3'}
+                    {'name': 'func3', 'func': lambda z: z, 'inputs': 'x_train', 'outputs': 'output3'}
                 ]
             ],
             [
-                {'name': 'func4', 'func': lambda a: a, 'inputs': 'input4', 'outputs': 'output4'}
+                {'name': 'func4', 'func': lambda a: a, 'inputs': 'x_train', 'outputs': 'output4'}
             ]
         ]
         with self.assertRaises(ValueError) as context:
@@ -94,10 +94,10 @@ class TestValidateConfig(unittest.TestCase):
 
     def test_mixed_dict_and_list_handling_in_model_space(self):
         model_space = [
-            {'name': 'func1', 'func': lambda x: x, 'inputs': 'input1', 'outputs': 'output1'},
+            {'name': 'func1', 'func': lambda x: x, 'inputs': 'x_train', 'outputs': 'output1'},
             [
-                {'name': 'func2', 'func': lambda x: x, 'inputs': 'input2', 'outputs': 'output2'},
-                {'name': 'func3', 'func': lambda x: x, 'inputs': 'input3', 'outputs': 'output3'}
+                {'name': 'func2', 'func': lambda x: x, 'inputs': 'x_train', 'outputs': 'output2'},
+                {'name': 'func3', 'func': lambda x: x, 'inputs': 'x_train', 'outputs': 'output3'}
             ]
         ]
 
@@ -108,8 +108,8 @@ class TestValidateConfig(unittest.TestCase):
 
     def test_name_collision_resolves_with_unique_suffix(self):
         model_space = [
-            {'name': 'func1', 'func': lambda x: x, 'inputs': 'input1', 'outputs': 'output1'},
-            {'name': 'func1', 'func': lambda x: x, 'inputs': 'input2', 'outputs': 'output2'}
+            {'name': 'func1', 'func': lambda x: x, 'inputs': 'x_train', 'outputs': 'output1'},
+            {'name': 'func1', 'func': lambda x: x, 'inputs': 'x_train', 'outputs': 'output2'}
         ]
 
         result = validate_config(model_space)
@@ -123,14 +123,14 @@ class TestValidateConfig(unittest.TestCase):
                     'name': 'test_func',
                     'train': {
                         'func': lambda x: x,
-                        'inputs': ['input'],
+                        'inputs': ['x_train'],
                         'outputs': ['output'],
                         'args': [],
                         'kwargs': {}
                     },
                     'inference': {
                         'func': lambda x: x,
-                        'inputs': ['input'],
+                        'inputs': ['x_train'],
                         'outputs': ['output'],
                         'args': [],
                         'kwargs': {}
@@ -157,19 +157,6 @@ class TestValidateConfig(unittest.TestCase):
             validate_config(model_space)
         assert "No name provided and no function to pull name from" in str(context.exception)
 
-    def test_validate_config_single_func_for_both_train_inference(self):
-        model_space = {
-            'name': 'test_func',
-            'func': lambda x: x + 1,  # Single func for both train and inference
-            'inputs': 'input',
-            'outputs': 'output'
-        }
-
-        result = validate_config(model_space)
-        assert 'train' in result[0][0]
-        assert 'inference' in result[0][0]
-        assert result[0][0]['train']['func'] == result[0][0]['inference']['func']
-
     def test_missing_inputs_defaults_to_empty_list(self):
         model_space = {
             'name': 'test_func',
@@ -185,7 +172,7 @@ class TestValidateConfig(unittest.TestCase):
         model_space = {
             'name': 'test_func',
             'func': lambda x: x,
-            'inputs': 'input'  # Missing 'outputs'
+            'inputs': 'x_train'  # Missing 'outputs'
         }
 
         result = validate_config(model_space)
@@ -196,7 +183,7 @@ class TestValidateConfig(unittest.TestCase):
         model_space = {
             'name': 'test_func',
             'func': lambda x: x,
-            'inputs': 'input',
+            'inputs': 'x_train',
             'outputs': 'output',
             'args': []  # Missing 'kwargs'
         }
@@ -215,6 +202,52 @@ class TestValidateConfig(unittest.TestCase):
         with self.assertRaises(TypeError) as context:
             validate_config(model_space)
         assert "'inputs' must be a string or a list" in str(context.exception)
+
+    def test_predefined_inputs_are_accepted(self):
+        model_space = [
+            {'name': 'step1', 'func': lambda x: x + 1, 'inputs': 'x_train', 'outputs': 'step1_output'},
+            {'name': 'step2', 'func': lambda x: x * 2, 'inputs': 'x_test', 'outputs': 'step2_output'},
+            {'name': 'step3', 'func': lambda y: y * 2, 'inputs': 'y_train', 'outputs': 'step3_output'},
+            {'name': 'step4', 'func': lambda z: z * 3, 'inputs': 'y_test', 'outputs': 'step4_output'}
+        ]
+
+        result = validate_config(model_space)
+        assert result[0][0]['train']['inputs'] == ['x_train']
+        assert result[1][0]['train']['inputs'] == ['x_test']
+        assert result[2][0]['train']['inputs'] == ['y_train']
+        assert result[3][0]['train']['inputs'] == ['y_test']
+
+    def test_outputs_of_previous_steps_are_accepted_as_inputs(self):
+        model_space = [
+            {'name': 'step1', 'func': lambda x: x + 1, 'inputs': 'x_train', 'outputs': 'step1_output'},
+            {'name': 'step2', 'func': lambda x: x * 2, 'inputs': 'step1_output', 'outputs': 'step2_output'},
+            {'name': 'step3', 'func': lambda y: y * 2, 'inputs': 'step2_output', 'outputs': 'step3_output'}
+        ]
+
+        result = validate_config(model_space)
+        assert result[1][0]['train']['inputs'] == ['step1_output']
+        assert result[2][0]['train']['inputs'] == ['step2_output']
+
+    def test_invalid_input_raises_error(self):
+        model_space = [
+            {'name': 'step1', 'func': lambda x: x + 1, 'inputs': 'x_train', 'outputs': 'step1_output'},
+            {'name': 'step2', 'func': lambda x: x * 2, 'inputs': 'invalid_input', 'outputs': 'step2_output'}
+        ]
+
+        with self.assertRaises(ValueError) as context:
+            validate_config(model_space)
+        assert "Input 'invalid_input' is not a valid previous output or a predefined input" in str(context.exception)
+
+    def test_mixed_valid_and_invalid_inputs(self):
+        model_space = [
+            {'name': 'step1', 'func': lambda x: x + 1, 'inputs': 'x_train', 'outputs': 'step1_output'},
+            {'name': 'step2', 'func': lambda x: x * 2, 'inputs': ['step1_output', 'invalid_input'],
+             'outputs': 'step2_output'}
+        ]
+
+        with self.assertRaises(ValueError) as context:
+            validate_config(model_space)
+        assert "Input 'invalid_input' is not a valid previous output or a predefined input" in str(context.exception)
 
     def test_invalid_non_iterable_outputs_raises_error(self):
         model_space = {
@@ -272,7 +305,7 @@ class TestValidateConfig(unittest.TestCase):
 
     def test_func_as_reference_to_previous_step_output(self):
         model_space = [
-            {'name': 'step1', 'func': lambda x: x + 1, 'inputs': 'input', 'outputs': 'step1_output'},
+            {'name': 'step1', 'func': lambda x: x + 1, 'inputs': 'x_train', 'outputs': 'step1_output'},
             {'name': 'step2', 'func': 'step1_output', 'inputs': 'step1_output', 'outputs': 'step2_output'}
         ]
 
@@ -283,7 +316,7 @@ class TestValidateConfig(unittest.TestCase):
 
     def test_func_reference_valid_with_multiple_previous_outputs(self):
         model_space = [
-            {'name': 'step1', 'func': lambda x: x + 1, 'inputs': 'input',
+            {'name': 'step1', 'func': lambda x: x + 1, 'inputs': 'x_train',
              'outputs': ['step1_output1', 'step1_output2']},
             {'name': 'step2', 'func': 'step1_output2', 'inputs': 'step1_output2', 'outputs': 'step2_output'}
         ]
@@ -295,7 +328,7 @@ class TestValidateConfig(unittest.TestCase):
 
     def test_func_reference_raises_error_if_no_match_in_previous_outputs(self):
         model_space = [
-            {'name': 'step1', 'func': lambda x: x + 1, 'inputs': 'input',
+            {'name': 'step1', 'func': lambda x: x + 1, 'inputs': 'x_train',
              'outputs': ['step1_output1', 'step1_output2']},
             {'name': 'step2', 'func': 'non_existent_output', 'inputs': 'step1_output1', 'outputs': 'step2_output'}
         ]
@@ -306,7 +339,7 @@ class TestValidateConfig(unittest.TestCase):
 
     def test_valid_configuration_with_func_as_callable_or_reference(self):
         model_space = [
-            {'name': 'step1', 'func': lambda x: x + 1, 'inputs': 'input', 'outputs': 'step1_output'},
+            {'name': 'step1', 'func': lambda x: x + 1, 'inputs': 'x_train', 'outputs': 'step1_output'},
             {'name': 'step2', 'func': 'step1_output', 'inputs': 'step1_output', 'outputs': 'step2_output'},
             {'name': 'step3', 'func': lambda y: y * 2, 'inputs': 'step2_output', 'outputs': 'step3_output'}
         ]
@@ -318,24 +351,24 @@ class TestValidateConfig(unittest.TestCase):
     def test_single_level_nested_structure(self):
         model_space = [
             [
-                {'name': 'step1', 'func': lambda x: x, 'inputs': 'input1', 'outputs': 'output1'},
-                {'name': 'step2', 'func': lambda x: x * 2, 'inputs': 'input2', 'outputs': 'output2'}
+                {'name': 'step1', 'func': lambda x: x, 'inputs': 'x_train', 'outputs': 'output1'},
+                {'name': 'step2', 'func': lambda x: x * 2, 'inputs': 'x_train', 'outputs': 'output2'}
             ],
             [
-                {'name': 'step3', 'func': lambda x: x + 1, 'inputs': 'input3', 'outputs': 'output3'}
+                {'name': 'step3', 'func': lambda x: x + 1, 'inputs': 'x_train', 'outputs': 'output3'}
             ]
         ]
 
         result = validate_config(model_space)
-        assert result[0][0]['train']['inputs'] == ['input1']
+        assert result[0][0]['train']['inputs'] == ['x_train']
         assert result[0][0]['train']['outputs'] == ['output1']
-        assert result[1][0]['train']['inputs'] == ['input3']
+        assert result[1][0]['train']['inputs'] == ['x_train']
 
     def test_raises_error_on_too_deep_nesting_corrected(self):
         model_space = [
             [
                 [
-                    {'name': 'func1', 'func': lambda x: x, 'inputs': 'input1', 'outputs': 'output1'},
+                    {'name': 'func1', 'func': lambda x: x, 'inputs': 'x_train', 'outputs': 'output1'},
                 ]
             ]
         ]
