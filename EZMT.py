@@ -7,7 +7,7 @@ import time
 from copy import deepcopy
 
 from organism import Organism, dna2str
-from config_validation import validate_config
+from config_validation import validate_config, ContinuousRange
 
 pp = pprint.PrettyPrinter(indent=4)
 
@@ -273,15 +273,16 @@ def mutate(organism, model_space, func_prob, nuc_prob, max_disc_shift, max_cont_
 
 
 def choose_nucleotides(nucleotide_space):
-    nucleotides = {}
-    if 'args' in nucleotide_space:
-        nucleotides['args'] = [round(random.uniform(*arg), 5) if isinstance(arg, tuple) else random.choice(arg)
-                               for arg in nucleotide_space['args']]
-    if 'kwargs' in nucleotide_space:
-        nucleotides['kwargs'] = {
-            key: round(random.uniform(*value), 5) if isinstance(value, tuple) else random.choice(value)
-            for key, value in nucleotide_space['kwargs'].items()
-        }
+    # Choose specific arg and kwarg values from arg and kwarg options
+    nucleotides = {'args': [
+        arg.sample() if isinstance(arg, ContinuousRange)
+        else random.choice(arg)
+        for arg in nucleotide_space['args']
+    ], 'kwargs': {
+        key: value.sample() if isinstance(value, ContinuousRange)
+        else random.choice(value)
+        for key, value in nucleotide_space['kwargs'].items()
+    }}
     return nucleotides
 
 
