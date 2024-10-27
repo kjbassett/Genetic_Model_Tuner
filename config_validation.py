@@ -108,6 +108,9 @@ def validate_info(function_dict, previous_outputs):
     if 'func' not in function_dict:
         raise ValueError(f"No 'func' key found in {function_dict}.")
 
+    # Check for GPU flag
+    function_dict['gpu'] = function_dict.get('gpu', False)
+
     # Check if 'func' is a string and validate it against previous outputs
     if isinstance(function_dict['func'], str):
         if function_dict['func'] not in previous_outputs:
