@@ -69,9 +69,9 @@ class ModelTuner:
         unique_organisms = {'': state}
 
         for i in range(len(self.model_space)):
-
             prev_unique = unique_organisms
             unique_organisms = dict()
+
             # Start all processes for this section of DNA. Only process unique decisions based on populations' DNAs
             for organism in self.population:
                 current_dna = dna2str(organism.dna[:i + 1])
@@ -83,13 +83,20 @@ class ModelTuner:
                 prev_dna = dna2str(organism.dna[:i])
                 # state is a dict of that hold all the saved outputs from previous steps for later use
                 try:
-                    state = dict(prev_unique[prev_dna])  # Must wrap in dict to make a copy
+                    # Must wrap in dict to make a shallow copy
+                    # I don't think we need to make a deep copy because we only overwrite keys on the outer layer
+                    state = dict(prev_unique[prev_dna])
                 except KeyError:
                     raise KeyError(f'No state found for previous dna: {prev_dna}')
-                unique_organisms[current_dna] = self.pool.apply_async(
-                    self.make_decision,
-                    args=(organism, i, state)
-                )
+
+                # If GPU is used, process serially to avoid excessive context switching with the GPU
+                if organism.dna[i]['train']['gpu']:
+                    unique_organisms[current_dna] = self.make_decision(organism, i, state)
+                else:
+                    unique_organisms[current_dna] = self.pool.apply_async(
+                        self.make_decision,
+                        args=(organism, i, state)
+                    )
             
             # Wait for all processes for this decision point to complete
             for dna, output in unique_organisms.items():
@@ -97,6 +104,7 @@ class ModelTuner:
                     unique_organisms[dna] = output.get()
 
         # Each organism "remembers" what it has processed
+        # TODO is this needed for every organism? Needed at all?
         for organism in self.population:
             organism.knowledge = unique_organisms[dna2str(organism.dna)]
 
