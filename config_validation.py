@@ -28,8 +28,8 @@ def validate_config(model_space):
     names_seen = {}
     previous_outputs = set(PREDEFINED_INPUTS)  # To track the outputs seen so far
 
-    if isinstance(model_space, dict): # One choice of function
-        model_space = [model_space]  # Standardize
+    if isinstance(model_space, dict):  # One choice of function
+        model_space = [model_space]  # Standardize format
 
     for gene_space in model_space:
         if isinstance(gene_space, dict):  # only one choice of function
@@ -38,10 +38,14 @@ def validate_config(model_space):
         new_gene_space = []
         for function_dict in gene_space:
             function_dict = validate_function_dict(function_dict, names_seen, previous_outputs)
+            print(function_dict)
             new_gene_space.append(function_dict)
+
             # Add the current step's outputs to previous_outputs for future reference
-            previous_outputs.update(function_dict['train']['outputs'])
-            previous_outputs.update(function_dict['inference']['outputs'])
+            if function_dict['train']:
+                previous_outputs.update(function_dict['train']['outputs'])
+            if function_dict['inference']:
+                previous_outputs.update(function_dict['inference']['outputs'])
         new_model_space.append(new_gene_space)
 
     return new_model_space
