@@ -180,5 +180,6 @@ class TestModelTunerGoals(unittest.TestCase):
         self.assertEqual(best_dna, expected_best_dna, "Best DNA should be the one with the highest score for maximization.")
         self.assertEqual(worst_dna, expected_worst_dna, "Worst DNA should be the one with the lowest score for maximization.")
 
+
 if __name__ == '__main__':
     unittest.main()
