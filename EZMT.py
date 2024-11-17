@@ -272,7 +272,7 @@ def mutate(organism, model_space, func_prob, nuc_prob, max_disc_shift, max_cont_
             if random.random() > nuc_prob:
                 continue
             nucleotide_space = gene_variant['args'][j]  # space for specific nucleotide
-            if isinstance(nucleotide_space, tuple):
+            if isinstance(nucleotide_space, ContinuousRange):
                 gene['args'][j] += (nucleotide_space[1] - nucleotide_space[0]) * random.uniform(-max_cont_shift, max_cont_shift)
                 gene['args'][j] = max(nucleotide_space[0], min(nucleotide_space[1], gene['args'][j]))
                 gene['args'][j] = round(gene['args'][j], 5)
