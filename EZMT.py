@@ -37,7 +37,11 @@ class ModelTuner:
     def select_and_reproduce(
             self,
             elitism=1,
-            reproduction='asexual'
+            reproduction='asexual',
+            gene_mutate_prob=0.05,
+            nuc_mutate_prob=0.1,
+            max_discrete_shift=2,
+            max_continuous_shift=0.05
     ):
         # Generate population from previous generation
         # keep top models
@@ -58,7 +62,7 @@ class ModelTuner:
                 child = parent1.mate(parent2)
             else:
                 raise ValueError(f'Cannot reproduce with reproduction type: {reproduction}')
-            mutate(child, self.model_space, 0.1, 1, 1, 0.05)
+            mutate(child, self.model_space, gene_mutate_prob, nuc_mutate_prob, max_discrete_shift, max_continuous_shift)
             new_pop.append(child)
         self.population = new_pop
 
