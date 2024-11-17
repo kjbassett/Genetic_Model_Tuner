@@ -38,7 +38,6 @@ def validate_config(model_space):
         new_gene_space = []
         for function_dict in gene_space:
             function_dict = validate_function_dict(function_dict, names_seen, previous_outputs)
-            print(function_dict)
             new_gene_space.append(function_dict)
 
             # Add the current step's outputs to previous_outputs for future reference
