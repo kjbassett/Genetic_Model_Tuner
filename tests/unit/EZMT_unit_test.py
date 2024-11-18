@@ -4,6 +4,7 @@ from organism import Organism
 from config_validation import ContinuousRange
 import pandas as pd
 import numpy as np
+from scipy.stats import binom
 
 
 class TestModelTunerPopulationInitialization(unittest.TestCase):
@@ -179,6 +180,86 @@ class TestModelTunerGoals(unittest.TestCase):
 
         self.assertEqual(best_dna, expected_best_dna, "Best DNA should be the one with the highest score for maximization.")
         self.assertEqual(worst_dna, expected_worst_dna, "Worst DNA should be the one with the lowest score for maximization.")
+
+
+class TestModelTunerSelectionAndReproduction(unittest.TestCase):
+
+    def setUp(self):
+        # Sample data and model space setup with variation for testing
+        data = pd.DataFrame({
+            'feature1': [1, 2, 3, 4, 5, 6, 7, 8],
+            'feature2': [10, 20, 30, 40, 50, 60, 70, 80],
+            'label': [0, 1, 0, 1, 0, 1, 0, 1]
+        })
+        
+        # Model space with variation in functions and arguments
+        self.model_space = [
+            [
+                {'name': 'gene1', 'train': {'func': lambda x: x, 'inputs': 'x_train', 'outputs': 'output1', 'args': [ContinuousRange(0, 10)], 'kwargs': {'param1': ContinuousRange(0, 10)}}},
+                {'name': 'gene2', 'train': {'func': lambda x: x**2, 'inputs': 'x_train', 'outputs': 'output2', 'args': [ContinuousRange(5, 15)], 'kwargs': {'param2': ContinuousRange(0, 10)}}}
+            ],
+            [
+                {'name': 'gene3', 'train': {'func': lambda x: x + 1, 'inputs': 'output1', 'outputs': 'output3', 'args': [ContinuousRange(0, 10)], 'kwargs': {'param3': ContinuousRange(0, 10)}}},
+                {'name': 'gene4', 'train': {'func': lambda x: x - 1, 'inputs': 'output2', 'outputs': 'output4', 'args': [ContinuousRange(5, 15)], 'kwargs': {'param4': ContinuousRange(0, 10)}}}
+            ]
+        ]
+        self.model_tuner = ModelTuner(self.model_space, data, y_col='label', pop_size=1000)
+        self.model_tuner.populate_init()
+
+    def test_mutation_effects_with_probabilities(self):
+        """Test that mutations occur at a rate consistent with given probabilities
+        
+        Statistical calculations get hairy when there are differing numbers of nucleotides in different gene options for the same gene slot.
+        Therefore, we give all gene options in 1 slot the same number of nucleotides.
+
+        Also if a gene did mutate, we have no visibility into the old gene, so we can't know nucleotide count unless we track parent genes.
+        """
+        # Set mutation probabilities
+        gene_mutate_prob = 0.2
+        nuc_mutate_prob = 0.5
+
+        # Capture the original DNA of the entire population
+        original_dna_set = {dna2str(organism.dna) for organism in self.model_tuner.population}
+        
+        # Perform reproduction with set mutation probabilities
+        self.model_tuner.select_and_reproduce(
+            gene_mutate_prob=gene_mutate_prob,
+            nuc_mutate_prob=nuc_mutate_prob
+        )
+
+        # Capture the new DNA
+        new_dna_list = [dna2str(organism.dna) for organism in self.model_tuner.population]
+
+        # Count how many organisms have DNA that matches any in the original DNA set (i.e., unchanged)
+        num_unchanged = sum(1 for dna in new_dna_list if dna in original_dna_set)
+
+        # Calculate the probability that an organism remains unchanged
+        # The probability that a gene does not mutate is (1 - gene_mutate_prob)
+        # The probability that each nucleotide does not mutate is (1 - nuc_mutate_prob)
+        n_mutatable_genes = len([gene for gene in self.model_space if len(gene) > 1])
+        prob_no_gene_mutation = (1 - gene_mutate_prob) ** n_mutatable_genes
+
+        n_mutatable_nucleotides = 0
+        # IMPORTANT, we assume that all options for all genes in one slot of the model space have the same # of nucleotides.
+        # See docstring, makes calculation easier.
+        for gene_space in self.model_space:
+            n_mutatable_nucleotides += len(gene_space[0]['train']['args'])
+            n_mutatable_nucleotides += len(gene_space[0]['train']['kwargs'])
+
+        prob_no_nucleotide_mutation = (1 - nuc_mutate_prob) ** n_mutatable_nucleotides
+        prob_no_mutation = prob_no_gene_mutation * prob_no_nucleotide_mutation
+
+        # Expected number of unchanged organisms
+        population_size = len(self.model_tuner.population)
+        expected_unchanged = population_size * prob_no_mutation
+        std_dev = np.sqrt(population_size * prob_no_mutation * (1 - prob_no_mutation))  # Binomial
+
+        # Use a confidence interval to check if the observed number of unchanged organisms is reasonable
+        lower_bound = expected_unchanged - 2 * std_dev
+        upper_bound = expected_unchanged + 2 * std_dev
+
+        self.assertGreaterEqual(num_unchanged, lower_bound, "Observed number of unchanged organisms is lower than expected.")
+        self.assertLessEqual(num_unchanged, upper_bound, "Observed number of unchanged organisms is higher than expected.")
 
 
 if __name__ == '__main__':
