@@ -222,11 +222,15 @@ class TestModelTunerSelectionAndReproduction(unittest.TestCase):
         gene_mutate_prob = 0.2
         nuc_mutate_prob = 0.5
 
+        # Set elitism to 0 to isolate testing probabilities
+        elitism = 0
+
         # Capture the original DNA of the entire population
         original_dna_set = {dna2str(organism.dna) for organism in self.model_tuner.population}
         
         # Perform reproduction with set mutation probabilities
         self.model_tuner.select_and_reproduce(
+            elitism=elitism,
             gene_mutate_prob=gene_mutate_prob,
             nuc_mutate_prob=nuc_mutate_prob
         )
