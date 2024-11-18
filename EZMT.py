@@ -268,18 +268,19 @@ def mutate(organism, model_space, func_prob, nuc_prob, max_disc_shift, max_cont_
             continue
 
         # Modify nucleotides slightly but still remain in same gene variant
-        for j, nucleotide in enumerate(gene['args']):
-            if random.random() > nuc_prob:
-                continue
-            nucleotide_space = gene_variant['args'][j]  # space for specific nucleotide
-            if isinstance(nucleotide_space, ContinuousRange):
-                gene['args'][j] += (nucleotide_space[1] - nucleotide_space[0]) * random.uniform(-max_cont_shift, max_cont_shift)
-                gene['args'][j] = max(nucleotide_space[0], min(nucleotide_space[1], gene['args'][j]))
-                gene['args'][j] = round(gene['args'][j], 5)
-            else:
-                index = nucleotide_space.index(nucleotide) + random.randint(-max_disc_shift, max_disc_shift)
-                index = max(0, min(len(nucleotide_space) - 1, index))
-                gene['args'][j] = nucleotide_space[index]
+        for ak in ['args', 'kwargs']:
+            for j, nucleotide in enumerate(gene[ak]) if ak == 'args' else gene[ak].items():
+                if random.random() > nuc_prob:
+                    continue
+                nucleotide_space = gene_variant[ak][j]  # space for specific nucleotide
+                if isinstance(nucleotide_space, ContinuousRange):
+                    gene[ak][j] += (nucleotide_space.end - nucleotide_space.start) * random.uniform(-max_cont_shift, max_cont_shift)
+                    gene[ak][j] = max(nucleotide_space.start, min(nucleotide_space.end, gene[ak][j]))
+                    gene[ak][j] = round(gene[ak][j], 5)
+                else:
+                    index = nucleotide_space.index(nucleotide) + random.randint(-max_disc_shift, max_disc_shift)
+                    index = max(0, min(len(nucleotide_space) - 1, index))
+                    gene[ak][j] = nucleotide_space[index]
 
         # Todo what about kwargs?
 
