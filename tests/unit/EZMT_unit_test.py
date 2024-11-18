@@ -206,6 +206,10 @@ class TestModelTunerSelectionAndReproduction(unittest.TestCase):
         self.model_tuner = ModelTuner(self.model_space, data, y_col='label', pop_size=1000)
         self.model_tuner.populate_init()
 
+        # assign scores for testing elitism
+        for i, organism in enumerate(self.model_tuner.population):
+            organism.fitness = 1.0 - (i * 0.1)  # Higher fitness for earlier organisms
+
     def test_mutation_effects_with_probabilities(self):
         """Test that mutations occur at a rate consistent with given probabilities
         
@@ -260,6 +264,29 @@ class TestModelTunerSelectionAndReproduction(unittest.TestCase):
 
         self.assertGreaterEqual(num_unchanged, lower_bound, "Observed number of unchanged organisms is lower than expected.")
         self.assertLessEqual(num_unchanged, upper_bound, "Observed number of unchanged organisms is higher than expected.")
+
+    def test_elitism_with_forced_mutation(self):
+        """Test that the top elite organisms' DNA is still present after reproduction with 100% mutation chance"""
+        # Number of elite organisms to preserve
+        elitism = 3
+
+        # Capture the DNA of the top elite organisms
+        original_top_elite_dna = {dna2str(organism.dna) for organism in sorted(self.model_tuner.population, reverse=True)[:elitism]}
+
+        # Perform reproduction with 100% mutation chance
+        self.model_tuner.select_and_reproduce(
+            elitism=elitism,
+            gene_mutate_prob=1.0,  # 100% chance of mutating the gene's function
+            nuc_mutate_prob=1.0,   # 100% chance of mutating each gene's nucleotide
+            max_discrete_shift=2,
+            max_continuous_shift=0.05
+        )
+
+        # Collect the DNA of the new population
+        new_population_dna = {dna2str(organism.dna) for organism in self.model_tuner.population}
+
+        # Check that the DNA of the top elite organisms is still present in the new population
+        self.assertTrue(original_top_elite_dna.issubset(new_population_dna), "The DNA of the top elite organisms should still be present in the new population.")
 
 
 if __name__ == '__main__':

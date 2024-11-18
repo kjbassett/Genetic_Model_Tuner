@@ -282,8 +282,6 @@ def mutate(organism, model_space, func_prob, nuc_prob, max_disc_shift, max_cont_
                     index = max(0, min(len(nucleotide_space) - 1, index))
                     gene[ak][j] = nucleotide_space[index]
 
-        # Todo what about kwargs?
-
 
 def choose_nucleotides(nucleotide_space):
     # Choose specific arg and kwarg values from arg and kwarg options
