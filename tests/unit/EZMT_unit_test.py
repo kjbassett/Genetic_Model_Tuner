@@ -1,10 +1,10 @@
 import unittest
+from unittest.mock import patch
 from EZMT import ModelTuner, dna2str
 from organism import Organism
 from config_validation import ContinuousRange
 import pandas as pd
 import numpy as np
-from scipy.stats import binom
 
 
 class TestModelTunerPopulationInitialization(unittest.TestCase):
@@ -292,6 +292,36 @@ class TestModelTunerSelectionAndReproduction(unittest.TestCase):
         # Check that the DNA of the top elite organisms is still present in the new population
         self.assertTrue(original_top_elite_dna.issubset(new_population_dna), "The DNA of the top elite organisms should still be present in the new population.")
 
+
+class TestModelTunerExperiencePopulation(unittest.TestCase):
+
+    def setUp(self):
+        # Sample data and model space setup with variation for testing
+        data = pd.DataFrame({
+            'feature1': [1, 2, 3, 4, 5, 6, 7, 8],
+            'feature2': [10, 20, 30, 40, 50, 60, 70, 80],
+            'label': [0, 1, 0, 1, 0, 1, 0, 1]
+        })
+        
+        # Model space with variation in functions and arguments
+        self.model_space = [
+            [
+                {'name': 'gene1', 'train': {'func': lambda x: x, 'inputs': 'x_train', 'outputs': 'output1', 'gpu': True}},
+                {'name': 'gene2', 'train': {'func': lambda x: x**2, 'inputs': 'x_train', 'outputs': 'output1'}}
+            ],
+            [
+                {'name': 'gene3', 'train': {'func': lambda x: x + 1, 'inputs': 'output1', 'outputs': 'output2', 'gpu': True}},
+                {'name': 'gene4', 'train': {'func': lambda x: x - 1, 'inputs': 'output1', 'outputs': 'output2'}}
+            ]
+        ]
+        self.model_tuner = ModelTuner(self.model_space, data, y_col='label', pop_size=20)
+        self.model_tuner.populate_init()
+
+
+    @patch('organism.Organsim.make_decision')
+    def test_gpu_steps_run_on_parent_process(self, mock_make_decision):
+        self.model_tuner.experience_population()
+        self.assertEqual(mock_make_decision.call_count, 3)
 
 if __name__ == '__main__':
     unittest.main()
