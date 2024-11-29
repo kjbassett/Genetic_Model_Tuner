@@ -31,6 +31,34 @@ class Organism:
 
     def add_gene(self, gene):
         self.dna.append(gene)
+    
+    def make_decision(self, gene_index, state):
+        gene_train = self.dna[gene_index]['train']  # training version of current gene
+        func = gene_train['func']
+
+        if isinstance(func, str):  # if str, get it from values of state ('model.run' => 'model' is a key in state)
+            f = func.split('.')
+            func = state[f[0]]
+            for part in f[1:]:
+                if hasattr(func, part):
+                    func = getattr(func, part)
+                else:
+                    raise Exception('Could not get ' + part + ' from ' + func)
+
+        # get data with matching genes from previous stage of development and apply function + args of next gene
+        args = (*[state[inp] for inp in gene_train['inputs']], *gene_train['args'])
+        output = func(*args, **gene_train['kwargs'])
+
+        # Update State
+        ons = gene_train['outputs']  # output names
+        if ons:
+            if len(ons) > 1:
+                output = {o: output[j] for j, o in enumerate(ons)}
+            elif len(ons) == 1:
+                output = {o: output for o in ons}
+            state = {**state, **output}
+
+        return state
 
     def mate(self, other):
         pass
