@@ -18,7 +18,7 @@ class ModelTuner:
         # Generations can be used for batches of data and not for evolution
         self.model_space = validate_config(model_space)
         self.pool = mp.Pool(8)
-        self.data_fold_generator = generate_stratified_folds(data, generations, y_col)
+        self.data_fold_generator = generate_stratified_folds(data, y_col)
         self.generations = generations
         self.population_size = pop_size
         self.population = []
@@ -101,7 +101,7 @@ class ModelTuner:
                         organism.make_decision,
                         args=(organism, i, state)
                     )
-            
+
             # Wait for all processes for this decision point to complete
             for dna, output in unique_organisms.items():
                 if isinstance(output, mp.pool.ApplyResult):
@@ -113,7 +113,6 @@ class ModelTuner:
             organism.knowledge = unique_organisms[dna2str(organism.dna)]
 
         return unique_organisms
-
 
     def score_fitness(self, unique_organisms):
         # TODO fix nan
@@ -170,7 +169,7 @@ class ModelTuner:
                 self.populate_init()
             else:
                 self.select_and_reproduce()
-            print(f'Starting generation {gen+1}/{self.generations}')
+            print(f'Starting generation {gen + 1}/{self.generations}')
             print('POPULATION:')
             for organism in self.population:
                 print(organism)
@@ -180,7 +179,7 @@ class ModelTuner:
             results = self.experience_population(
                 {'x_train': x_train, 'x_test': x_test, 'y_train': y_train, 'y_test': y_test}
             )
-            
+
             self.score_fitness(results)
             print('Run Time: ' + str(time.time() - t))
             pp.pprint(self.metrics[-1])
@@ -246,7 +245,8 @@ def mutate(organism, model_space, func_prob, nuc_prob, max_disc_shift, max_cont_
                     continue
                 nucleotide_space = gene_variant[ak][j]  # space for specific nucleotide
                 if isinstance(nucleotide_space, ContinuousRange):
-                    gene[ak][j] += (nucleotide_space.end - nucleotide_space.start) * random.uniform(-max_cont_shift, max_cont_shift)
+                    gene[ak][j] += (nucleotide_space.end - nucleotide_space.start) * random.uniform(-max_cont_shift,
+                                                                                                    max_cont_shift)
                     gene[ak][j] = max(nucleotide_space.start, min(nucleotide_space.end, gene[ak][j]))
                     gene[ak][j] = round(gene[ak][j], 5)
                 else:
@@ -281,14 +281,20 @@ def choose_gene_from_space(gene_space):
     return gene
 
 
-def generate_stratified_folds(data, n_splits, y_col):
+def generate_stratified_folds(data, y_col, n_splits=5):
     x = data.drop(y_col, axis=1)
     y = data[y_col]
+    min_class_count = y.value_counts().min()
+    n_splits = min(n_splits, min_class_count)
     skf = StratifiedKFold(n_splits=n_splits)
-    for train_idx, test_idx in skf.split(x, y):
+    splits = list(skf.split(x, y))
+    i = 0
+    while True:
+        train_idx, test_idx = splits[i % n_splits]
         x_train, x_test = x.iloc[train_idx], x.iloc[test_idx]
         y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
         yield x_train, x_test, y_train, y_test
+        i += 1
 
 
 """
