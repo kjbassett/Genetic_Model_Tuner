@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from EZMT import ModelTuner, dna2str
 from organism import Organism
 from config_validation import ContinuousRange
@@ -310,18 +310,32 @@ class TestModelTunerExperiencePopulation(unittest.TestCase):
                 {'name': 'gene2', 'train': {'func': lambda x: x**2, 'inputs': 'x_train', 'outputs': 'output1'}}
             ],
             [
-                {'name': 'gene3', 'train': {'func': lambda x: x + 1, 'inputs': 'output1', 'outputs': 'output2', 'gpu': True}},
-                {'name': 'gene4', 'train': {'func': lambda x: x - 1, 'inputs': 'output1', 'outputs': 'output2'}}
+                {'name': 'gene3', 'train': {'func': lambda x: x + 1, 'inputs': 'output1', 'outputs': 'output2', 'gpu': True}}
             ]
         ]
         self.model_tuner = ModelTuner(self.model_space, data, y_col='label', pop_size=20)
         self.model_tuner.populate_init()
 
 
-    @patch('organism.Organsim.make_decision')
-    def test_gpu_steps_run_on_parent_process(self, mock_make_decision):
-        self.model_tuner.experience_population()
+    @patch('organism.Organism.make_decision')
+    def test_correct_number_of_decisions_on_correct_processes(self, mock_make_decision):
+        # TODO This test should be broken up
+        # 1. Tests that the right number of jobs are put through the multiprocessing pool
+        # 2. Tests that the right number of jobs are started synchronously in the parent process
+        # 3. Tests that only unique jobs are started.
+        #    Population of 20 with only 3 unique conbinations of genes should not do redundant work.
+        x_train, x_test, y_train, y_test = next(self.model_tuner.data_fold_generator)
+        init_state = {'x_train': x_train, 'x_test': x_test, 'y_train': y_train, 'y_test': y_test}
+
+        mock_make_decision.return_value = {**init_state, 'output1': 1}
+
+        self.model_tuner.pool.apply_async = MagicMock()
+        self.model_tuner.experience_population(init_state)
+        # First generation should have 1 gpu, 1 cpu
+        # Second generation is only gpu, making gg & cg between the two generations
         self.assertEqual(mock_make_decision.call_count, 3)
+        self.assertEqual(self.model_tuner.pool.apply_async.call_count, 1)
+
 
 if __name__ == '__main__':
     unittest.main()
