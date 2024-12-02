@@ -5,6 +5,7 @@ from organism import Organism
 from config_validation import ContinuousRange
 import pandas as pd
 import numpy as np
+import time
 
 
 class TestModelTunerPopulationInitialization(unittest.TestCase):
@@ -306,11 +307,11 @@ class TestModelTunerExperiencePopulation(unittest.TestCase):
         # Model space with variation in functions and arguments
         self.model_space = [
             [
-                {'name': 'gene1', 'train': {'func': lambda x: x, 'inputs': 'x_train', 'outputs': 'output1', 'gpu': True}},
-                {'name': 'gene2', 'train': {'func': lambda x: x**2, 'inputs': 'x_train', 'outputs': 'output1'}}
+                {'name': 'gene1', 'train': {'func': time.sleep, 'outputs': 'output1', 'args': [[3]], 'gpu': True}},
+                {'name': 'gene2', 'train': {'func': time.sleep, 'outputs': 'output1', 'args': [[3]]}}
             ],
             [
-                {'name': 'gene3', 'train': {'func': lambda x: x + 1, 'inputs': 'output1', 'outputs': 'output2', 'gpu': True}}
+                {'name': 'gene3', 'train': {'func': time.time, 'outputs': 'output2', 'gpu': True}}
             ]
         ]
         self.model_tuner = ModelTuner(self.model_space, data, y_col='label', pop_size=20)
@@ -335,6 +336,26 @@ class TestModelTunerExperiencePopulation(unittest.TestCase):
         # Second generation is only gpu, making gg & cg between the two generations
         self.assertEqual(mock_make_decision.call_count, 3)
         self.assertEqual(self.model_tuner.pool.apply_async.call_count, 1)
+
+    def test_cpu_steps_started_before_gpu(self):
+        # If any gpu (synchronous) jobs start before any cpu (parallel) jobs, the total sleep would be 6 or more.
+        # gpu jobs should always start after all cpu jobs for the current step of experience_population
+        x_train, x_test, y_train, y_test = next(self.model_tuner.data_fold_generator)
+        init_state = {'x_train': x_train, 'x_test': x_test, 'y_train': y_train, 'y_test': y_test}
+
+        self.model_tuner.population = sorted(
+            self.model_tuner.population, key=lambda org: org.dna[0]['train']['gpu']
+        )
+        t = time.time()
+        self.model_tuner.experience_population(init_state)
+        assert time.time() - t < 5
+
+        self.model_tuner.population = sorted(
+            self.model_tuner.population, key=lambda org: not org.dna[0]['train']['gpu']
+        )
+        t = time.time()
+        self.model_tuner.experience_population(init_state)
+        assert time.time() - t < 5
 
 
 if __name__ == '__main__':
