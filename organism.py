@@ -1,6 +1,7 @@
 from copy import deepcopy
 import os
 import json
+import datetime
 
 
 class Organism:
@@ -66,21 +67,32 @@ class Organism:
     def reproduce(self):
         return Organism(deepcopy(self.dna))
 
-    def save(self):
-
-        dna = deepcopy(self.dna)
-        print(dna)
-        # remove 'func' keys from dna
-        for gene in dna:
-            for key in ['train', 'inference']:
-                if gene[key] is None:
-                    continue
-                gene[key].pop('func')
-        print(dna)
+    def save_params(self, name):
+        if self.knowledge is None:
+            raise ValueError("Knowledge is not available. Cannot save parameters.")
         if not os.path.exists('organisms'):
             os.makedirs('organisms')
-        with open('organisms/config.json', 'w') as f:
-            json.dump(dna, f, cls=StrEncoder, indent=4)
+        if not os.path.exists(f"organisms/{name}"):
+            os.makedirs(f"organisms/{name}")
+        folder = f"organisms/{name}/{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+        os.makedirs(folder)
+        params_needed = self._find_params_to_save()
+        params = {param: self.knowledge[param] for param in params_needed}
+
+        with open(f"{folder}/config.json", "w") as f:
+            json.dump(params, f, cls=ThePickler, folder=folder, indent=4)
+
+    def _find_params_to_save(self):
+        params_needed = []
+        for gene in self.dna[::-1]:
+            if gene['inference']:
+                for out in gene['inference']['outputs']:
+                    if out in params_needed:
+                        params_needed.remove(out)
+                for inp in gene['inference']['inputs']:
+                    if inp not in ['x_train', 'y_train', 'x_test', 'y_test']:
+                        params_needed.append(inp)
+        return params_needed
 
     def reset(self):
         self.score = 0
@@ -100,9 +112,24 @@ def dna2str(dna):
     return dna_str
 
 
-class StrEncoder(json.JSONEncoder):
+class ThePickler(json.JSONEncoder):
+    def __init__(self, folder='', *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.folder = folder
+        if not os.path.exists(self.folder):
+            os.makedirs(self.folder)
+
     def default(self, obj):
         try:
             return super().default(obj)
         except TypeError:
-            return str(obj)
+            import pickle
+            try:
+                pickled_data = pickle.dumps(obj)
+                file_name = f"{id(obj)}.pkl"
+                with open(os.path.join(self.folder, file_name), 'wb') as f:
+                    f.write(pickled_data)
+                return file_name
+            except Exception as e:
+                print(f"Error pickling object: {str(e)}")
+                return str(obj)
