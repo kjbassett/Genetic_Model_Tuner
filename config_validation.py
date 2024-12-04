@@ -116,8 +116,9 @@ def validate_info(function_dict, previous_outputs):
 
     # Check if 'func' is a string and validate it against previous outputs
     if isinstance(function_dict['func'], str):
-        if function_dict['func'] not in previous_outputs:
-            raise ValueError(f"Function reference '{function_dict['func']}' not found in any previous outputs.")
+        needed_output = function_dict['func'].split(".")[0]
+        if needed_output not in previous_outputs:
+            raise ValueError(f"Function reference '{needed_output}' not found in any previous outputs.")
     elif not callable(function_dict['func']):
         raise TypeError(f"'func' value in {function_dict} is not callable or a valid string reference.")
 
