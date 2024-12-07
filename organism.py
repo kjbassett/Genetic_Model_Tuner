@@ -37,9 +37,9 @@ class Organism:
     def add_gene(self, gene):
         self.dna.append(gene)
     
-    def make_decision(self, gene_index, state):
-        gene_train = self.dna[gene_index]['train']  # training version of current gene
-        func = gene_train['func']
+    def make_decision(self, mode, gene_index, state):
+        gene = self.dna[gene_index][mode]  # training version of current gene
+        func = gene['func']
 
         if isinstance(func, str):  # if str, get it from values of state ('model.run' => 'model' is a key in state)
             f = func.split('.')
@@ -51,11 +51,11 @@ class Organism:
                     raise Exception('Could not get ' + part + ' from ' + func)
 
         # get data with matching genes from previous stage of development and apply function + args of next gene
-        args = (*[state[inp] for inp in gene_train['inputs']], *gene_train['args'])
-        output = func(*args, **gene_train['kwargs'])
+        args = (*[state[inp] for inp in gene['inputs']], *gene['args'])
+        output = func(*args, **gene['kwargs'])
 
         # Update State
-        ons = gene_train['outputs']  # output names
+        ons = gene['outputs']  # output names
         if ons:
             if len(ons) > 1:
                 output = {o: output[j] for j, o in enumerate(ons)}
@@ -70,6 +70,16 @@ class Organism:
 
     def reproduce(self):
         return Organism(deepcopy(self.dna))
+
+    def predict(self, x_new):
+        # TODO does this belong in the Organism class or the ModelTuner class?
+        state = {**self.knowledge, 'x_new': x_new}
+        for gene_index in range(len(self.dna)):
+            state = self.make_decision('inference', gene_index, state)
+        if 'y_pred' in state:
+            return state['y_pred']
+        else:
+            raise Exception('No output found after last gene in the organism.')
 
     def save(self, name):
         if not os.path.exists('organisms'):
@@ -155,7 +165,7 @@ class Organism:
                     continue
                 gene['inference']['func'] = load_function_from_reference(func_ref)
 
-        return cls(dna_loaded), knowledge
+        return cls(dna_loaded, knowledge)
 
     def reset(self):
         self.score = 0
