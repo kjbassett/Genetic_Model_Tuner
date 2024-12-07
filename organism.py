@@ -2,18 +2,22 @@ from copy import deepcopy
 import os
 import json
 import datetime
+import importlib
 
 
 class Organism:
 
-    def __init__(self, dna=None):
+    def __init__(self, dna=None, knowledge=None):
         if dna is None:
             self.dna = []
         else:
             self.dna = dna
+        if knowledge is None:
+            self.knowledge = {}
+        else:
+            self.knowledge = knowledge
         self.score = 0
         self.fitness = 0
-        self.knowledge = None
 
     def __lt__(self, other):
         return self.fitness < other.fitness
@@ -76,44 +80,105 @@ class Organism:
         os.makedirs(folder)
 
         # save params
-        self.save_params(folder)
-        # TODO self.save_inference_dna(folder)
+        formatted_dna, knowledge_to_save = self.create_formatted_dna()
+        with open(f"{folder}/dna.json", "w") as f:
+            json.dump(formatted_dna, f, indent=4)
+        with open(f"{folder}/knowledge.json", "w") as f:
+            json.dump(knowledge_to_save, f, cls=ThePickler, folder=folder, indent=4)
 
-    def save_params(self, folder):
+    def create_formatted_dna(self):
         """
-        Scan through the inference dna to find inputs that come from training and the args chosen by the model optimizer.
+        Format the DNA for saving. Get the knowledge from training that is necessary for inference.
 
-        If an output from a previous step supplies it, then we remove it from the list.
-        :return: A dictionary with the inputs and args needed for inference.
+        :return: formatted_dna, knowledge_to_save
         """
-        if self.knowledge is None:
-            raise ValueError("Knowledge is not available. Cannot save parameters.")
+        dna_copy = []
+        knowledge_to_save = {}
+        inference_outputs = []
+        for step, gene in enumerate(self.dna):
 
-        params = {}
-        for step, gene in enumerate(self.dna[::-1]):
-            step = len(self.dna) - step - 1
-
-            params[step] = {}
+            new_train = None
             if gene['train']:
-                params[step]['args'] = gene['train']['args']
-                params[step]['kwargs'] = gene['train']['kwargs']
+                # Don't save the function itself. Save a reference.
+                train_func = gene['train']['func']
+                if not isinstance(train_func, str):
+                    train_func = get_function_reference(gene['train']['func'])
+                new_train = {**gene['train'], 'func': train_func}
 
+            new_inference = None
             if gene['inference']:
-                for out in gene['inference']['outputs']:
-                    # Remove something from params if we find out it is an output from a previous step
-                    if out in params:
-                        del params[out]
+                # Save inputs that come from training
                 for inp in gene['inference']['inputs']:
-                    # An input is not needed if it's data used for training (x_train, y_train, x_test, y_test)
-                    if inp not in ['x_train', 'y_train', 'x_test', 'y_test']:
-                        params[inp] = self.knowledge[inp]
-        with open(f"{folder}/config.json", "w") as f:
-            json.dump(params, f, cls=ThePickler, folder=folder, indent=4)
+                    if inp not in inference_outputs + ['x_new']:  # TODO Adjust tests for x_new
+                        knowledge_to_save[inp] = self.knowledge[inp]
+                # Don't save the function itself. Save a reference.
+                inf_func = gene['inference']['func']
+                if isinstance(inf_func, str):
+                    parent = inf_func.split('.')[0]
+                    if parent not in inference_outputs:
+                        knowledge_to_save[parent] = self.knowledge[parent]
+                else:
+                    inf_func = get_function_reference(inf_func)
+                inference_outputs += gene['outputs']
+                new_inference = {**gene['inference'], 'func': inf_func}
+
+            dna_copy.append({
+                'name': gene['name'],
+                'train': new_train,
+                'inference': new_inference
+            })
+
+        return dna_copy, knowledge_to_save
+
+    @classmethod
+    def load(cls, folder):
+        # Load knowledge
+        with open(f"{folder}/knowledge.json", "r") as f:
+            knowledge = json.load(f)
+        # Some knowledge is stored in pickle files. Load them
+        for key, value in knowledge.items():
+            if value.endswith('.pkl'):
+                import pickle
+                knowledge[key] = pickle.load(open(value, 'rb'))
+
+        # Load DNA
+        with open(f"{folder}/dna.json", "r") as f:
+            dna_loaded = json.load(f)
+        # We don't save actual functions, just their references. We need to load them
+        inference_outputs = []
+        for gene in dna_loaded:
+            # Train is not needed right now. Maybe in the future we will want to train more after saving and loading.
+            if 'func' in gene['inference']:
+                func_ref = gene['inference']['func']
+                parent = func_ref.split('.')[0]
+                if parent in knowledge or parent in inference_outputs:
+                    continue
+                gene['inference']['func'] = load_function_from_reference(func_ref)
+
+        return cls(dna_loaded), knowledge
 
     def reset(self):
         self.score = 0
         self.fitness = 0
         self.knowledge = None
+
+
+def get_function_reference(func):
+    """Generate a string reference for a function, including nested paths."""
+    module_name = func.__module__
+    qualname = func.__qualname__
+    return f"{module_name}.{qualname}"
+
+
+def load_function_from_reference(func_ref):
+    """Load a function from its string reference, handling nested paths."""
+    module_name, *path = func_ref.split('.')
+    module = importlib.import_module(module_name)
+    func = module
+    for part in path:
+        func = getattr(func, part)
+
+    return func
 
 
 def dna2str(dna):
