@@ -67,32 +67,48 @@ class Organism:
     def reproduce(self):
         return Organism(deepcopy(self.dna))
 
-    def save_params(self, name):
-        if self.knowledge is None:
-            raise ValueError("Knowledge is not available. Cannot save parameters.")
+    def save(self, name):
         if not os.path.exists('organisms'):
             os.makedirs('organisms')
         if not os.path.exists(f"organisms/{name}"):
             os.makedirs(f"organisms/{name}")
         folder = f"organisms/{name}/{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
         os.makedirs(folder)
-        params_needed = self._find_params_to_save()
-        params = {param: self.knowledge[param] for param in params_needed}
 
-        with open(f"{folder}/config.json", "w") as f:
-            json.dump(params, f, cls=ThePickler, folder=folder, indent=4)
+        # save params
+        self.save_params(folder)
+        # TODO self.save_inference_dna(folder)
 
-    def _find_params_to_save(self):
-        params_needed = []
-        for gene in self.dna[::-1]:
+    def save_params(self, folder):
+        """
+        Scan through the inference dna to find inputs that come from training and the args chosen by the model optimizer.
+
+        If an output from a previous step supplies it, then we remove it from the list.
+        :return: A dictionary with the inputs and args needed for inference.
+        """
+        if self.knowledge is None:
+            raise ValueError("Knowledge is not available. Cannot save parameters.")
+
+        params = {}
+        for step, gene in enumerate(self.dna[::-1]):
+            step = len(self.dna) - step - 1
+
+            params[step] = {}
+            if gene['train']:
+                params[step]['args'] = gene['train']['args']
+                params[step]['kwargs'] = gene['train']['kwargs']
+
             if gene['inference']:
                 for out in gene['inference']['outputs']:
-                    if out in params_needed:
-                        params_needed.remove(out)
+                    # Remove something from params if we find out it is an output from a previous step
+                    if out in params:
+                        del params[out]
                 for inp in gene['inference']['inputs']:
+                    # An input is not needed if it's data used for training (x_train, y_train, x_test, y_test)
                     if inp not in ['x_train', 'y_train', 'x_test', 'y_test']:
-                        params_needed.append(inp)
-        return params_needed
+                        params[inp] = self.knowledge[inp]
+        with open(f"{folder}/config.json", "w") as f:
+            json.dump(params, f, cls=ThePickler, folder=folder, indent=4)
 
     def reset(self):
         self.score = 0
