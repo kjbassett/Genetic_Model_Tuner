@@ -24,40 +24,38 @@ PREDEFINED_INPUTS = {"x_train", "x_test", "y_train", "y_test"}
 
 
 def validate_config(model_space):
-    new_model_space = []
     names_seen = {}
     previous_outputs = set(PREDEFINED_INPUTS)  # To track the outputs seen so far
 
     if isinstance(model_space, dict):  # One choice of function
         model_space = [model_space]  # Standardize format
 
-    for gene_space in model_space:
-        if isinstance(gene_space, dict):  # only one choice of function
-            gene_space = [gene_space]  # Standardize. Could be a list of functions
+    for ti in ('train', 'inference'):  # Must do all train first because its outputs can be used in inference
+        for gs_idx, gene_space in enumerate(model_space):
+            if isinstance(gene_space, dict):  # only one choice of function
+                gene_space = [gene_space]  # Standardize. Could be a list of functions
+            for fd_idx, function_dict in enumerate(gene_space):
+                if ti == 'train':  # we only need to validate the outer dict once
+                    gene_space[fd_idx] = validate_outer_function_dict(function_dict, names_seen)
+                gene_space[fd_idx][ti] = validate_inner_function_dict(function_dict[ti], previous_outputs)
+                print(gs_idx, fd_idx, ti)
+                print(previous_outputs)
+            model_space[gs_idx] = gene_space  # replace the original list with the validated one
+    return model_space
 
-        new_gene_space = []
-        for function_dict in gene_space:
-            function_dict = validate_function_dict(function_dict, names_seen, previous_outputs)
-            new_gene_space.append(function_dict)
-
-            # Add the current step's outputs to previous_outputs for future reference
-            if function_dict['train']:
-                previous_outputs.update(function_dict['train']['outputs'])
-            if function_dict['inference']:
-                previous_outputs.update(function_dict['inference']['outputs'])
-        new_model_space.append(new_gene_space)
-
-    return new_model_space
-
-
-def validate_function_dict(function_dict, names_seen, previous_outputs):
-    if not isinstance(function_dict, dict):
-        raise ValueError("The third layer in should be a dictionary. Got " + str(type(function_dict)))
-    validate_name(function_dict, names_seen)
-    function_dict = validate_structure(function_dict)  # Can transform structure
-    validate_info(function_dict['train'], previous_outputs)
-    validate_info(function_dict['inference'], previous_outputs)
-    return function_dict
+def validate_outer_function_dict(outer_dict, names_seen):
+    """
+    validates and standardizes the function dictionary, containing both train and inference
+    :param outer_dict:
+    :param names_seen:
+    :param previous_outputs:
+    :return: function_dict with standardized structure
+    """
+    if not isinstance(outer_dict, dict):
+        raise ValueError("The third layer in should be a dictionary. Got " + str(type(outer_dict)))
+    validate_name(outer_dict, names_seen)
+    outer_dict = validate_structure(outer_dict)  # Can transform structure
+    return outer_dict
 
 
 def validate_name(function_dict, names_seen):
@@ -103,11 +101,12 @@ def validate_structure(function_dict):
     return function_dict
 
 
-def validate_info(function_dict, previous_outputs):
+def validate_inner_function_dict(function_dict, previous_outputs):
     if function_dict is None:
         return
     if not isinstance(function_dict, dict):
         raise TypeError(f"{function_dict} is not a dictionary.")
+
     if 'func' not in function_dict:
         raise ValueError(f"No 'func' key found in {function_dict}.")
 
@@ -125,6 +124,8 @@ def validate_info(function_dict, previous_outputs):
     # Validate inputs and outputs
     function_dict['inputs'] = validate_io(function_dict.get('inputs', []), 'inputs', previous_outputs)
     function_dict['outputs'] = validate_io(function_dict.get('outputs', []), 'outputs')
+    # Add the current step's outputs to previous_outputs for future input checks
+    previous_outputs.update(function_dict['outputs'])
 
     # Validate args and kwargs
     function_dict['args'] = validate_args(function_dict.get('args', []))
