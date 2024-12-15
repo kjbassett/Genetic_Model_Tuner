@@ -20,7 +20,8 @@ class ContinuousRange:
 
 
 # List of valid inputs provided by the model tuner at the beginning of optimization
-PREDEFINED_INPUTS = {"x_train", "x_test", "y_train", "y_test"}
+# TODO x_new should be allowed in inference only, and the others in train only. The checks don't differentiate that
+PREDEFINED_INPUTS = {"x_train", "x_test", "y_train", "y_test", "x_new"}
 
 
 def validate_config(model_space):
