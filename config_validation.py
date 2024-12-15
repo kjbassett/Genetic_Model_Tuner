@@ -60,13 +60,31 @@ def validate_outer_function_dict(outer_dict, names_seen):
 
 def validate_name(function_dict, names_seen):
     # Make function_dict (AKA potential training step) is given a name
+    # TODO Make this less repetitive
+    # Check in outer layer
     if 'name' not in function_dict:
-        # if name not provided and one function for training/inference, we can use the name of the function it
+        # if name not provided and one function for training/inference, we can use the name of the function
         if 'func' in function_dict:
             if callable(function_dict['func']):
                 function_dict['name'] = function_dict['func'].__name__
             else:  # function is a string representing the output of a previous step. Function stored in the state
                 function_dict['name'] = function_dict['func']
+
+        # Check in inner layers
+        elif 'train' in function_dict and function_dict['train']:
+            if 'name' in function_dict['train']:
+                function_dict['name'] = function_dict['train']['name']
+            elif callable(function_dict['train']['func']):
+                function_dict['name'] = function_dict['train']['func'].__name__
+            else:  # function is a string representing the output of a previous step. Function stored in the state
+                function_dict['name'] = function_dict['train']['func']
+        elif 'inference' in function_dict and function_dict['inference']:
+            if 'name' in function_dict['train']:
+                function_dict['name'] = function_dict['inference']['name']
+            elif callable(function_dict['inference']['func']):
+                function_dict['name'] = function_dict['inference']['func'].__name__
+            else:  # function is a string representing the output of a previous step. Function stored in the state
+                function_dict['name'] = function_dict['inference']['func']
         else:
             raise ValueError(
                 "No name provided and no function to pull name from."
