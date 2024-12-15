@@ -285,8 +285,6 @@ def choose_gene_from_space(gene_space):
 def generate_stratified_folds(data, y_col, n_splits=5):
     x = data.drop(y_col, axis=1)
     y = data[y_col]
-    min_class_count = y.value_counts().min()
-    n_splits = min(n_splits, min_class_count)
     skf = StratifiedKFold(n_splits=n_splits)
     splits = list(skf.split(x, y))
     i = 0
