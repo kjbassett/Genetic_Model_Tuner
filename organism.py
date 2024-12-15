@@ -104,7 +104,7 @@ class Organism:
         """
         dna_copy = []
         knowledge_to_save = {}
-        inference_outputs = []
+        available_inputs = ['x_new']
         for step, gene in enumerate(self.dna):
 
             new_train = None
@@ -119,17 +119,17 @@ class Organism:
             if gene['inference']:
                 # Save inputs that come from training
                 for inp in gene['inference']['inputs']:
-                    if inp not in inference_outputs + ['x_new']:  # TODO Adjust tests for x_new
+                    if inp not in available_inputs:
                         knowledge_to_save[inp] = self.knowledge[inp]
                 # Don't save the function itself. Save a reference.
                 inf_func = gene['inference']['func']
                 if isinstance(inf_func, str):
                     parent = inf_func.split('.')[0]
-                    if parent not in inference_outputs:
+                    if parent not in available_inputs:
                         knowledge_to_save[parent] = self.knowledge[parent]
                 else:
                     inf_func = get_function_reference(inf_func)
-                inference_outputs += gene['outputs']
+                available_inputs += gene['inference']['outputs']
                 new_inference = {**gene['inference'], 'func': inf_func}
 
             dna_copy.append({
@@ -143,22 +143,23 @@ class Organism:
     @classmethod
     def load(cls, folder):
         # Load knowledge
-        with open(f"{folder}/knowledge.json", "r") as f:
+        with open(os.path.join(folder, "knowledge.json"), "r") as f:
             knowledge = json.load(f)
         # Some knowledge is stored in pickle files. Load them
         for key, value in knowledge.items():
             if value.endswith('.pkl'):
                 import pickle
-                knowledge[key] = pickle.load(open(value, 'rb'))
+                with open(os.path.join(folder, value), 'rb') as pkl_file:
+                    knowledge[key] = pickle.load(pkl_file)
 
         # Load DNA
-        with open(f"{folder}/dna.json", "r") as f:
+        with open(os.path.join(folder, "dna.json"), "r") as f:
             dna_loaded = json.load(f)
         # We don't save actual functions, just their references. We need to load them
         inference_outputs = []
         for gene in dna_loaded:
             # Train is not needed right now. Maybe in the future we will want to train more after saving and loading.
-            if 'func' in gene['inference']:
+            if gene['inference']:
                 func_ref = gene['inference']['func']
                 parent = func_ref.split('.')[0]
                 if parent in knowledge or parent in inference_outputs:
