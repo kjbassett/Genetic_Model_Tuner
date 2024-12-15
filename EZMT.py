@@ -78,7 +78,10 @@ class ModelTuner:
             unique_organisms = dict()
 
             # Start all processes for this section of DNA. Only process unique decisions based on populations' DNAs
-            for organism in sorted(self.population, key=lambda org: org.dna[i]['train']['gpu']):
+            for organism in sorted(
+                    self.population,
+                    key=lambda org: (False if org.dna[i]['train'] is None else True) and org.dna[i]['train']['gpu']
+            ):
                 current_dna = dna2str(organism.dna[:i + 1])
 
                 # check if identical series of decisions up until this stage has already started calculating
@@ -95,12 +98,14 @@ class ModelTuner:
                     raise KeyError(f'No state found for previous dna: {prev_dna}')
 
                 # If GPU is used, process serially to avoid excessive context switching with the GPU
-                if organism.dna[i]['train']['gpu']:
-                    unique_organisms[current_dna] = organism.make_decision(i, state)
+                if not organism.dna[i]['train']:
+                    unique_organisms[current_dna] = state
+                elif organism.dna[i]['train']['gpu']:
+                    unique_organisms[current_dna] = organism.make_decision('train', i, state)
                 else:
                     unique_organisms[current_dna] = self.pool.apply_async(
                         organism.make_decision,
-                        args=(i, state)
+                        args=('train', i, state)
                     )
 
             # Wait for all processes for this decision point to complete
