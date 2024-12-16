@@ -98,9 +98,8 @@ class ModelTuner:
                     raise KeyError(f'No state found for previous dna: {prev_dna}')
 
                 # If GPU is used, process serially to avoid excessive context switching with the GPU
-                if not organism.dna[i]['train']:
-                    unique_organisms[current_dna] = state
-                elif organism.dna[i]['train']['gpu']:
+                # Also no need to use multiprocessing if the train gene is None (inactive)
+                if not organism.dna[i]['train'] or organism.dna[i]['train']['gpu']:
                     unique_organisms[current_dna] = organism.make_decision('train', i, state)
                 else:
                     unique_organisms[current_dna] = self.pool.apply_async(

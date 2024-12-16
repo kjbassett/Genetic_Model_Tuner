@@ -38,6 +38,8 @@ class Organism:
         self.dna.append(gene)
     
     def make_decision(self, mode, gene_index, state):
+        if not self.dna[gene_index][mode]:
+            return state  # gene is inactive in this mode, return current state
         gene = self.dna[gene_index][mode]  # training version of current gene
         func = gene['func']
 
@@ -48,7 +50,7 @@ class Organism:
                 if hasattr(func, part):
                     func = getattr(func, part)
                 else:
-                    raise Exception('Could not get ' + part + ' from ' + func)
+                    raise Exception(f'Could not get {part} from {func}')
 
         # get data with matching genes from previous stage of development and apply function + args of next gene
         args = (*[state[inp] for inp in gene['inputs']], *gene['args'])
