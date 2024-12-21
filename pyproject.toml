@@ -24,10 +24,5 @@ homepage = "https://github.com/kjbassett/Genetic_Model_Tuner"
 repository = "https://github.com/kjbassett/Genetic_Model_Tuner"
 documentation = "https://github.com/kjbassett/Genetic_Model_Tuner"
 
-
-
-[tool.setuptools]
-package-dir = {"" = "src"}
-
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["."]
