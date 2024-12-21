@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ez-model-tuner"
+version = "0.1.0"
+description = "A tool to optimize hyperparameters of a data analysis pipeline through a genetic algorithm."
+authors = [
+    { name = "Kenneth Bassett", github = "https://github.com/kjbassett/" }
+]
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.6"
+
+[project.urls]
+homepage = "https://github.com/kjbassett/BangerSoundVisualizer"
+repository = "https://github.com/kjbassett/BangerSoundVisualizer"
+documentation = ""
+
+[project.dependencies]
+numpy = "*"
+pandas = "*"
+scikit-learn = "*"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
