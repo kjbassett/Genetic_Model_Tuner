@@ -13,15 +13,18 @@ license = { text = "MIT" }
 readme = "README.md"
 requires-python = ">=3.6"
 
+dependencies = [
+    "numpy",
+    "pandas",
+    "scikit-learn"
+]
+
 [project.urls]
 homepage = "https://github.com/kjbassett/Genetic_Model_Tuner"
 repository = "https://github.com/kjbassett/Genetic_Model_Tuner"
 documentation = "https://github.com/kjbassett/Genetic_Model_Tuner"
 
-[project.dependencies]
-numpy = "*"
-pandas = "*"
-scikit-learn = "*"
+
 
 [tool.setuptools]
 package-dir = {"" = "src"}
