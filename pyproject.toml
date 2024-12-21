@@ -14,8 +14,8 @@ readme = "README.md"
 requires-python = ">=3.6"
 
 [project.urls]
-homepage = "https://github.com/kjbassett/BangerSoundVisualizer"
-repository = "https://github.com/kjbassett/BangerSoundVisualizer"
+homepage = "https://github.com/kjbassett/Genetic_Model_Tuner"
+repository = "https://github.com/kjbassett/Genetic_Model_Tuner"
 documentation = ""
 
 [project.dependencies]
