@@ -113,7 +113,7 @@ class ModelTuner:
                     unique_organisms[dna] = output.get()
 
         # Each organism "remembers" what it has processed
-        # TODO is this needed for every organism? Needed at all?
+        # knowledge is saved when the organism is saved, and it is loaded later to use during inference
         for organism in self.population:
             organism.knowledge = unique_organisms[dna2str(organism.dna)]
 
