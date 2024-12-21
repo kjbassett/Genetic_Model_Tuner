@@ -7,7 +7,7 @@ name = "ez-model-tuner"
 version = "0.1.0"
 description = "A tool to optimize hyperparameters of a data analysis pipeline through a genetic algorithm."
 authors = [
-    { name = "Kenneth Bassett", github = "https://github.com/kjbassett/" }
+    { name = "Kenneth Bassett", email = "bassettkennethj@gmail.com" }
 ]
 license = { text = "MIT" }
 readme = "README.md"
