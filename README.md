@@ -30,8 +30,8 @@ Gene space i holds all the possible configurations for step i in the pipeline.
    'func': the function to be called,
    'args': [[list of possible discrete values for arg1], (start, end of continuous range of values for arg2)...],
    'kwargs': {
-       "kwarg1": [list of possible discrete values for arg1], 
-       "kwarg2": (start, end of continuous range of possible values for arg2)
+       "kwarg1": [list of possible discrete values for kwarg1], 
+       "kwarg2": (start, end of continuous range of possible values for kwarg2)
    }
    'inputs': [list of inputs by name], # explained later
    'outputs': [list of outputs by name] # explained later

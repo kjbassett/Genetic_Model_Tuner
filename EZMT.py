@@ -1,10 +1,13 @@
+import asyncio
 import numpy as np
 import random
-import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor, Future
 from sklearn.model_selection import StratifiedKFold
 import pprint
 import time
+import inspect
 from copy import deepcopy
+import functools
 
 from organism import Organism, dna2str
 from config_validation import validate_config, ContinuousRange
@@ -17,7 +20,7 @@ class ModelTuner:
     def __init__(self, model_space, data, y_col, generations=1, pop_size=20, goal='min'):
         # Generations can be used for batches of data and not for evolution
         self.model_space = validate_config(model_space)
-        self.pool = mp.Pool(8)
+        self.gpu_semaphore = asyncio.Semaphore(1)
         self.data_fold_generator = generate_stratified_folds(data, y_col)
         self.generations = generations
         self.population_size = pop_size
@@ -66,8 +69,7 @@ class ModelTuner:
             new_pop.append(child)
         self.population = new_pop
 
-    def experience_population(self, state):
-
+    async def experience_population(self, state, pool):
         # Just as we experience the universe, the universe experiences us
         # for each decision point, process only unique chains of decisions + args from first decision point to current
 
@@ -97,20 +99,13 @@ class ModelTuner:
                 except KeyError:
                     raise KeyError(f'No state found for previous dna: {prev_dna}')
 
-                # If GPU is used, process serially to avoid excessive context switching with the GPU
-                # Also no need to use multiprocessing if the train gene is None (inactive)
-                if not organism.dna[i]['train'] or organism.dna[i]['train']['gpu']:
-                    unique_organisms[current_dna] = organism.make_decision('train', i, state)
-                else:
-                    unique_organisms[current_dna] = self.pool.apply_async(
-                        organism.make_decision,
-                        args=('train', i, state)
-                    )
+                new_state = await self.run_gene(organism, i, state, pool)
+                unique_organisms[current_dna] = new_state
 
             # Wait for all processes for this decision point to complete
             for dna, output in unique_organisms.items():
-                if isinstance(output, mp.pool.ApplyResult):
-                    unique_organisms[dna] = output.get()
+                if isinstance(output, Future):
+                    unique_organisms[dna] = output.result()
 
         # Each organism "remembers" what it has processed
         # knowledge is saved when the organism is saved, and it is loaded later to use during inference
@@ -118,6 +113,37 @@ class ModelTuner:
             organism.knowledge = unique_organisms[dna2str(organism.dna)]
 
         return unique_organisms
+
+    async def run_gene(self, organism, gene_index, state, pool):
+        if not organism.dna[gene_index]['train']:
+            return state
+
+        func = organism.dna[gene_index]['train']['func']
+        is_async = inspect.iscoroutinefunction(func)
+        is_gpu = organism.dna[gene_index]['train']['gpu']
+
+        # If GPU is used, process serially to avoid excessive context switching with the GPU
+        if is_gpu:
+            async with self.gpu_semaphore:
+                if is_async:
+                    # Async GPU
+                    return await organism.make_decision_async('train', gene_index, state)
+                else:
+                    # Sync GPU
+                    return await asyncio.to_thread(organism.make_decision, 'train', gene_index, state)
+        loop = asyncio.get_running_loop()
+        if is_async:
+            # Async CPU
+            return await loop.run_in_executor(
+                pool,
+                functools.partial(run_async_in_process, organism.make_decision_async, 'train', gene_index, state)
+            )
+        else:
+            # Sync CPU
+            return await loop.run_in_executor(
+                pool,
+                organism.make_decision, 'train', gene_index, state
+            )
 
     def score_fitness(self, unique_organisms):
         # TODO fix nan
@@ -167,33 +193,39 @@ class ModelTuner:
             else:
                 model.fitness = (model.score - worst) / (best - worst)
 
-    def run(self):
+    async def run(self):
         pp.pprint(self.model_space)
-        for gen in range(self.generations):
-            if gen == 0:
-                self.populate_init()
-            else:
-                self.select_and_reproduce()
-            print(f'Starting generation {gen + 1}/{self.generations}')
-            print('POPULATION:')
-            for organism in self.population:
-                print(organism)
-            t = time.time()
-            # Get next fold of data for next generation
-            x_train, x_test, y_train, y_test = next(self.data_fold_generator)
-            results = self.experience_population(
-                {'x_train': x_train, 'x_test': x_test, 'y_train': y_train, 'y_test': y_test}
-            )
+        with ProcessPoolExecutor(8) as pool:
+            for gen in range(self.generations):
+                if gen == 0:
+                    self.populate_init()
+                else:
+                    self.select_and_reproduce()
+                print(f'Starting generation {gen + 1}/{self.generations}')
+                print('POPULATION:')
+                for organism in self.population:
+                    print(organism)
+                t = time.time()
+                # Get next fold of data for next generation
+                x_train, x_test, y_train, y_test = next(self.data_fold_generator)
+                results = await self.experience_population(
+                    {'x_train': x_train, 'x_test': x_test, 'y_train': y_train, 'y_test': y_test},
+                    pool
+                )
 
-            self.score_fitness(results)
-            print('Run Time: ' + str(time.time() - t))
-            pp.pprint(self.metrics[-1])
-            print('--------------------------------')
-            for model in self.population:
-                pp.pprint(model.dna)
+                self.score_fitness(results)
+                print('Run Time: ' + str(time.time() - t))
+                pp.pprint(self.metrics[-1])
+                print('--------------------------------')
+                for model in self.population:
+                    pp.pprint(model.dna)
 
-        # score is converted into fitness, which always follows highest-is-best
-        return max(self.population)
+            # score is converted into fitness, which always follows highest-is-best
+            return max(self.population)
+
+
+def run_async_in_process(async_func, *args, **kwargs):
+    return asyncio.run(async_func(*args, **kwargs))
 
 
 def natural_selection(

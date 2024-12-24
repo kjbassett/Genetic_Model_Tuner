@@ -38,8 +38,24 @@ class Organism:
         self.dna.append(gene)
     
     def make_decision(self, mode, gene_index, state):
+        # Synchronous decision-making logic
+        func, args, gene = self._make_decision_common(mode, gene_index, state)
+        if not func:
+            return state
+        output = func(*args, **gene['kwargs'])
+        return self._update_state(state, gene, output)
+
+    async def make_decision_async(self, mode, gene_index, state):
+        # Asynchronous decision-making logic
+        func, args, gene = self._make_decision_common(mode, gene_index, state)
+        if not func:
+            return state
+        output = await func(*args, **gene['kwargs'])
+        return self._update_state(state, gene, output)
+
+    def _make_decision_common(self, mode, gene_index, state):
         if not self.dna[gene_index][mode]:
-            return state  # gene is inactive in this mode, return current state
+            return None, None, None  # gene is inactive in this mode, return current state
         gene = self.dna[gene_index][mode]  # training version of current gene
         func = gene['func']
 
@@ -54,8 +70,9 @@ class Organism:
 
         # get data with matching genes from previous stage of development and apply function + args of next gene
         args = (*[state[inp] for inp in gene['inputs']], *gene['args'])
-        output = func(*args, **gene['kwargs'])
+        return func, args, gene
 
+    def _update_state(self, state, gene, output):
         # Update State
         ons = gene['outputs']  # output names
         if ons:
