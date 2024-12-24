@@ -1,5 +1,5 @@
 import unittest
-from config_validation import validate_config, ContinuousRange
+from ezmt.config_validation import validate_config, ContinuousRange
 from copy import deepcopy
 
 

@@ -101,8 +101,8 @@ class Organism:
             raise Exception('No output found after last gene in the organism.')
 
     def save(self, name):
-        if not os.path.exists('organisms'):
-            os.makedirs('organisms')
+        if not os.path.exists('../organisms'):
+            os.makedirs('../organisms')
         if not os.path.exists(f"organisms/{name}"):
             os.makedirs(f"organisms/{name}")
         folder = f"organisms/{name}/{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"

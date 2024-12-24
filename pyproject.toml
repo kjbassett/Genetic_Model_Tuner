@@ -3,7 +3,7 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ez-model-tuner"
+name = "ezmt"
 version = "0.1.0"
 description = "A tool to optimize hyperparameters of a data analysis pipeline through a genetic algorithm."
 authors = [
@@ -26,3 +26,4 @@ documentation = "https://github.com/kjbassett/Genetic_Model_Tuner"
 
 [tool.setuptools.packages.find]
 where = ["."]
+include = ["ezmt", "ezmt.*"]
