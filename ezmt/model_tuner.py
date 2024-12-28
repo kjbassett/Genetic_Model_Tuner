@@ -364,13 +364,11 @@ step 3. Run:
     (In other words, don't do extra work! If 100 models have 2 choices for first step, do 2 calculations, not 100!)
 step 4. Evaluate all models performance
 step 5. If running multiple generations
-            Repeat step 3 and 4 until stopping condition it met
+            Repeat step 3 and 4 until stopping condition is met
             Base the parameters of the next generation off of the previous generation
                 according to some function of their performance scores
 
 Future TODO:
     Make ability to add steps before splitting data for ease of use with new data
-    let functions change
-    let there be nucleotides that represent continuous variables
     let mutation magnitude adjust during the run
 """
