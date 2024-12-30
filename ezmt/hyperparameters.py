@@ -54,7 +54,7 @@ class DiscreteOrdinal(Hyperparameter):
         return self.options[new_index]
 
 
-class DiscreteChoice(Hyperparameter):
+class DiscreteNonOrdinal(Hyperparameter):
     def __init__(self, options):
         if not isinstance(options, (list, tuple)):
             raise ValueError(f"Options for DiscreteChoice must be a list or tuple. Got {type(options)}")
