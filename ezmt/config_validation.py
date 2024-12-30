@@ -1,22 +1,6 @@
 from copy import deepcopy
-import random
 
-
-class ContinuousRange:
-    def __init__(self, start, end):
-        if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
-            raise ValueError(f"Start and end values for ContinuousRange must be numeric. Got {start}, {end}")
-        if start >= end:
-            raise ValueError(f"Start value must be less than end value. Got start={start} and end={end}")
-        self.start = start
-        self.end = end
-
-    def __repr__(self):
-        return f"ContinuousRange({self.start}, {self.end})"
-
-    def sample(self):
-        """Sample a random value from the continuous range."""
-        return random.uniform(self.start, self.end)
+from ezmt.hyperparameters import Hyperparameter
 
 
 def validate_config(model_space, hyperparams):
@@ -33,7 +17,7 @@ def validate_config(model_space, hyperparams):
         # x_train, x_test, y_train, y_test are available during training only
         if ti == 'inference':
             available_args.difference({"x_train", "x_test", "y_train", "y_test"})
-            available_args.update("x_new")
+            available_args.update({"x_new"})
         for gs_idx, gene_space in enumerate(model_space):
             if isinstance(gene_space, dict):  # user supplied only one choice of function
                 gene_space = [gene_space]  # Standardize. Could have been a list of functions
@@ -46,14 +30,19 @@ def validate_config(model_space, hyperparams):
             model_space[gs_idx] = gene_space  # replace the original list with the validated one
     return model_space
 
+
 def validate_hyperparams(hyperparams):
     for name, hp in hyperparams.items():
-        if isinstance(hp, ContinuousRange):
-            continue  # Valid if it's a ContinuousRange
-        elif hasattr(hp, '__iter__'):
+        if isinstance(hp, Hyperparameter):
+            continue  # Valid
+        elif hasattr(hp, '__iter__') and not isinstance(hp, str):
             continue  # Valid if it's an iterable (discrete options)
         else:
-            raise TypeError(f"Each hyperparameter must be a ContinuousRange or an iterable. Invalid element: {name}")
+            raise TypeError(
+                f"Each hyperparam must be of type Hyperparameter or a non-string iterable. "
+                f"Invalid element: {name}. "
+                f"Type: {type(hp)}"
+            )
 
 
 def validate_outer_function_dict(outer_dict, names_seen):
@@ -154,7 +143,7 @@ def validate_inner_function_dict(function_dict, available_args):
 
     # Validate args and kwargs
     function_dict['args'] = validate_args(function_dict.get('args', []), available_args)
-    function_dict['kwargs'] = validate_kwargs(function_dict.get('kwargs', {}))
+    function_dict['kwargs'] = validate_kwargs(function_dict.get('kwargs', {}), available_args)
 
     # Validate outputs
     function_dict['outputs'] = validate_output(function_dict.get('outputs', []))
@@ -194,18 +183,16 @@ def validate_args(args_list, available_args):
     return args_list
 
 
-def validate_kwargs(kwargs_dict):
+def validate_kwargs(kwargs_dict, available_args):
     if not isinstance(kwargs_dict, dict):
         raise TypeError(f"'kwargs' must be a dictionary.")
 
     for key, value in kwargs_dict.items():
-        if isinstance(value, ContinuousRange):
-            continue  # Valid if it's a ContinuousRange
-        elif hasattr(value, '__iter__'):
-            continue  # Valid if it's an iterable (discrete options)
-        else:
-            raise TypeError(
-                f"Each value in 'kwargs' must be a ContinuousRange or an iterable. Invalid element: {value}")
+        if isinstance(value, str) and value not in available_args:
+            print(
+                f"Warning: kwarg referencing '{value}' is not an available argument. "
+                f"You can ignore this if the provided function takes '{value}' as a string argument."
+            )
 
     return kwargs_dict
 

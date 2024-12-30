@@ -11,8 +11,9 @@ import inspect
 from copy import deepcopy
 import functools
 
-from organism import Organism, dna2str
-from config_validation import validate_config, ContinuousRange
+from ezmt.organism import Organism, dna2str
+from ezmt.config_validation import validate_config
+from ezmt.hyperparameters import ContinuousRange
 
 pp = pprint.PrettyPrinter(indent=4)
 
@@ -301,19 +302,8 @@ def mutate(organism, model_space, hyperparams, func_prob, nuc_prob, max_disc_shi
                 if random.random() > nuc_prob:
                     continue
                 nucleotide = gene_variant[ak][j]  # space for specific nucleotide
-                # if isinstance(nucleotide, str) and nucleotide in hyperparams:
-                #     gene[ak][j] = hyperparams[nucleotide].mutate(gene[ak][j])
-                if not (isinstance(nucleotide, str) and nucleotide in hyperparams):
-                    continue
-                nucleotide = hyperparams[nucleotide]
-                if isinstance(nucleotide, ContinuousRange):
-                    gene[ak][j] += (nucleotide.end - nucleotide.start) * random.uniform(-max_cont_shift, max_cont_shift)
-                    gene[ak][j] = max(nucleotide.start, min(nucleotide.end, gene[ak][j]))
-                    gene[ak][j] = round(gene[ak][j], 5)
-                else:
-                    index = nucleotide.index(nucleotide) + random.randint(-max_disc_shift, max_disc_shift)
-                    index = max(0, min(len(nucleotide) - 1, index))
-                    gene[ak][j] = nucleotide[index]
+                if isinstance(nucleotide, str) and nucleotide in hyperparams:
+                    gene[ak][j] = hyperparams[nucleotide].mutate(gene[ak][j])
 
 
 def choose_nucleotides(nucleotide_space, hyperparams):

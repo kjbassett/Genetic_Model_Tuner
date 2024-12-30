@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch, MagicMock
 from ezmt.model_tuner import ModelTuner, dna2str
 from ezmt.organism import Organism
-from ezmt.config_validation import ContinuousRange
+from ezmt.hyperparameters import ContinuousRange
 import pandas as pd
 import numpy as np
 import time
