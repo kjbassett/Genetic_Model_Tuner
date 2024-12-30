@@ -19,30 +19,42 @@ class ContinuousRange:
         return random.uniform(self.start, self.end)
 
 
-# List of valid inputs provided by the model tuner at the beginning of optimization
-# TODO x_new should be allowed in inference only, and the others in train only. The checks don't differentiate that
-PREDEFINED_INPUTS = {"x_train", "x_test", "y_train", "y_test", "x_new"}
+def validate_config(model_space, hyperparams):
+    validate_hyperparams(hyperparams)
 
-
-def validate_config(model_space):
     names_seen = {}
-    previous_outputs = set(PREDEFINED_INPUTS)  # To track the outputs seen so far
+    available_args = {"x_train", "x_test", "y_train", "y_test"}  # To track the objects available to be args (or func)
+    available_args.update(hyperparams.keys())  # Add hyperparameters to the available_args
 
     if isinstance(model_space, dict):  # One choice of function
         model_space = [model_space]  # Standardize format
 
     for ti in ('train', 'inference'):  # Must do all train first because its outputs can be used in inference
+        # x_train, x_test, y_train, y_test are available during training only
+        if ti == 'inference':
+            available_args.difference({"x_train", "x_test", "y_train", "y_test"})
+            available_args.update("x_new")
         for gs_idx, gene_space in enumerate(model_space):
-            if isinstance(gene_space, dict):  # only one choice of function
-                gene_space = [gene_space]  # Standardize. Could be a list of functions
+            if isinstance(gene_space, dict):  # user supplied only one choice of function
+                gene_space = [gene_space]  # Standardize. Could have been a list of functions
             for fd_idx, function_dict in enumerate(gene_space):
                 if ti == 'train':  # we only need to validate the outer dict once
                     gene_space[fd_idx] = validate_outer_function_dict(function_dict, names_seen)
-                gene_space[fd_idx][ti] = validate_inner_function_dict(function_dict[ti], previous_outputs)
+                gene_space[fd_idx][ti] = validate_inner_function_dict(function_dict[ti], available_args)
                 print(gs_idx, fd_idx, ti)
-                print(previous_outputs)
+                print(available_args)
             model_space[gs_idx] = gene_space  # replace the original list with the validated one
     return model_space
+
+def validate_hyperparams(hyperparams):
+    for name, hp in hyperparams.items():
+        if isinstance(hp, ContinuousRange):
+            continue  # Valid if it's a ContinuousRange
+        elif hasattr(hp, '__iter__'):
+            continue  # Valid if it's an iterable (discrete options)
+        else:
+            raise TypeError(f"Each hyperparameter must be a ContinuousRange or an iterable. Invalid element: {name}")
+
 
 def validate_outer_function_dict(outer_dict, names_seen):
     """
@@ -120,7 +132,7 @@ def validate_structure(function_dict):
     return function_dict
 
 
-def validate_inner_function_dict(function_dict, previous_outputs):
+def validate_inner_function_dict(function_dict, available_args):
     if function_dict is None:
         return
     if not isinstance(function_dict, dict):
@@ -135,56 +147,50 @@ def validate_inner_function_dict(function_dict, previous_outputs):
     # Check if 'func' is a string and validate it against previous outputs
     if isinstance(function_dict['func'], str):
         needed_output = function_dict['func'].split(".")[0]
-        if needed_output not in previous_outputs:
+        if needed_output not in available_args:
             raise ValueError(f"Function reference '{needed_output}' not found in any previous outputs.")
     elif not callable(function_dict['func']):
         raise TypeError(f"'func' value in {function_dict} is not callable or a valid string reference.")
 
-    # Validate inputs and outputs
-    function_dict['inputs'] = validate_io(function_dict.get('inputs', []), 'inputs', previous_outputs)
-    function_dict['outputs'] = validate_io(function_dict.get('outputs', []), 'outputs')
-    # Add the current step's outputs to previous_outputs for future input checks
-    previous_outputs.update(function_dict['outputs'])
-
     # Validate args and kwargs
-    function_dict['args'] = validate_args(function_dict.get('args', []))
+    function_dict['args'] = validate_args(function_dict.get('args', []), available_args)
     function_dict['kwargs'] = validate_kwargs(function_dict.get('kwargs', {}))
+
+    # Validate outputs
+    function_dict['outputs'] = validate_output(function_dict.get('outputs', []))
+    # Add the current step's outputs to previous_outputs for future input checks
+    available_args.update(function_dict['outputs'])
 
     return function_dict
 
 
-def validate_io(io_list, io_type, previous_outputs=None):
+def validate_output(io_list):
     if isinstance(io_list, str):
         io_list = [io_list]  # Wrap single string into a list
     if not isinstance(io_list, list):
-        raise TypeError(f"'{io_type}' must be a string or a list.")
+        raise TypeError(f"'outputs' must be a string or a list.")
 
     # Validate that all elements in the list are strings
     for element in io_list:
         if not isinstance(element, str):
-            raise TypeError(f"Each element in '{io_type}' must be a string. Invalid element: {element}")
-
-        # If we're validating inputs, ensure they are valid previous outputs or predefined inputs
-        if io_type == 'inputs' and previous_outputs is not None:
-            if element not in previous_outputs:
-                raise ValueError(f"Input '{element}' is not a valid previous output or a predefined input "
-                                 f"('x_train', 'x_test', 'y_train', 'y_test').")
+            raise TypeError(f"Each element in 'outputs' must be a string. Invalid element: {element}")
 
     return io_list
 
 
-def validate_args(args_list):
-    if not isinstance(args_list, list):
-        raise TypeError(f"'args' must be a list.")
+def validate_args(args_list, available_args):
+    if not isinstance(args_list, (list, tuple)):
+        args_list = [args_list]  # Wrap single value into a list
+
 
     for arg in args_list:
-        if isinstance(arg, ContinuousRange):
-            continue  # Valid if it's a ContinuousRange
-        elif hasattr(arg, '__iter__'):
-            continue  # Valid if it's an iterable (discrete options)
-        else:
-            raise TypeError(f"Each element in 'args' must be a ContinuousRange or an iterable. Invalid element: {arg}")
-
+        # If we're validating inputs, ensure they are valid previous outputs or predefined inputs
+        if isinstance(arg, str):
+            if arg not in available_args:
+                print(
+                    f"Warning: arg '{arg}' is not an available arg. "
+                    f"You can ignore this if the provided function takes '{arg}' as a string argument."
+                )
     return args_list
 
 

@@ -69,7 +69,7 @@ class Organism:
                     raise Exception(f'Could not get {part} from {func}')
 
         # get data with matching genes from previous stage of development and apply function + args of next gene
-        args = (*[state[inp] for inp in gene['inputs']], *gene['args'])
+        args = (state[arg] if isinstance(arg, str) and arg in state else arg for arg in gene['args'])
         return func, args, gene
 
     def _update_state(self, state, gene, output):

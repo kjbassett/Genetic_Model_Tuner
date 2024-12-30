@@ -229,9 +229,7 @@ class ModelTuner:
                 # Get next fold of data for next generation
                 x_train, x_test, y_train, y_test = next(self.data_fold_generator)
                 results = await self.experience_population(
-                    {
-                        'x_train': x_train, 'x_test': x_test, 'y_train': y_train, 'y_test': y_test, **self.hyperparams
-                    },
+                    {'x_train': x_train, 'x_test': x_test, 'y_train': y_train, 'y_test': y_test},
                     pool
                 )
 
