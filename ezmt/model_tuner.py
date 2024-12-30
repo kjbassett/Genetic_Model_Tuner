@@ -2,6 +2,8 @@ import asyncio
 import numpy as np
 import random
 from concurrent.futures import ProcessPoolExecutor, Future
+
+import pandas as pd
 from sklearn.model_selection import StratifiedKFold
 import pprint
 import time
@@ -17,9 +19,19 @@ pp = pprint.PrettyPrinter(indent=4)
 
 class ModelTuner:
 
-    def __init__(self, model_space, data, y_col, generations=1, pop_size=20, goal='min'):
+    def __init__(
+            self,
+            model_space: list,
+            hyperparams: dict,
+            data: pd.DataFrame,
+            y_col: str,
+            generations: int = 1,
+            pop_size: int = 20,
+            goal: str = 'min'
+    ):
         # Generations can be used for batches of data and not for evolution
-        self.model_space = validate_config(model_space)
+        self.model_space = validate_config(model_space, hyperparams)
+        self.hyperparams = hyperparams
         self.gpu_semaphore = asyncio.Semaphore(1)
         self.data_fold_generator = generate_stratified_folds(data, y_col)
         self.generations = generations
@@ -33,7 +45,7 @@ class ModelTuner:
         for _ in range(self.population_size):
             organism = Organism()
             for gene_space in self.model_space:
-                gene = choose_gene_from_space(gene_space)  # Chooses nucleotide space and then specifies nucleotides
+                gene = choose_gene_from_space(gene_space, self.hyperparams)  # Chooses nucleotide space and then specifies nucleotides
                 organism.add_gene(gene)
             self.population.append(organism)
 
@@ -65,7 +77,15 @@ class ModelTuner:
                 child = parent1.mate(parent2)
             else:
                 raise ValueError(f'Cannot reproduce with reproduction type: {reproduction}')
-            mutate(child, self.model_space, gene_mutate_prob, nuc_mutate_prob, max_discrete_shift, max_continuous_shift)
+            mutate(
+                child,
+                self.model_space,
+                self.hyperparams,
+                gene_mutate_prob,
+                nuc_mutate_prob,
+                max_discrete_shift,
+                max_continuous_shift
+            )
             new_pop.append(child)
         self.population = new_pop
 
@@ -209,7 +229,9 @@ class ModelTuner:
                 # Get next fold of data for next generation
                 x_train, x_test, y_train, y_test = next(self.data_fold_generator)
                 results = await self.experience_population(
-                    {'x_train': x_train, 'x_test': x_test, 'y_train': y_train, 'y_test': y_test},
+                    {
+                        'x_train': x_train, 'x_test': x_test, 'y_train': y_train, 'y_test': y_test, **self.hyperparams
+                    },
                     pool
                 )
 
@@ -243,7 +265,7 @@ def natural_selection(
     return np.random.choice(population, size=n_survivors, replace=False, p=prob_dist)
 
 
-def mutate(organism, model_space, func_prob, nuc_prob, max_disc_shift, max_cont_shift):
+def mutate(organism, model_space, hyperparams, func_prob, nuc_prob, max_disc_shift, max_cont_shift):
     """
     mutates the genes of an organism, making it make different decisions
 
@@ -261,7 +283,7 @@ def mutate(organism, model_space, func_prob, nuc_prob, max_disc_shift, max_cont_
         #  you left off here because it needs to mutate train version
 
         if len(gene_space) > 1 and random.uniform(0, 1) <= func_prob:
-            organism.dna[i] = choose_gene_from_space(gene_space)
+            organism.dna[i] = choose_gene_from_space(gene_space, hyperparams)
             # choosing a new gene (function) chooses random nucleotides (args), so no need to mutate this gene further
             continue
 
@@ -280,39 +302,43 @@ def mutate(organism, model_space, func_prob, nuc_prob, max_disc_shift, max_cont_
             for j, nucleotide in enumerate(gene[ak]) if ak == 'args' else gene[ak].items():
                 if random.random() > nuc_prob:
                     continue
-                nucleotide_space = gene_variant[ak][j]  # space for specific nucleotide
-                if isinstance(nucleotide_space, ContinuousRange):
-                    gene[ak][j] += (nucleotide_space.end - nucleotide_space.start) * random.uniform(-max_cont_shift,
-                                                                                                    max_cont_shift)
-                    gene[ak][j] = max(nucleotide_space.start, min(nucleotide_space.end, gene[ak][j]))
+                nucleotide = gene_variant[ak][j]  # space for specific nucleotide
+                # if isinstance(nucleotide, str) and nucleotide in hyperparams:
+                #     gene[ak][j] = hyperparams[nucleotide].mutate(gene[ak][j])
+                if not (isinstance(nucleotide, str) and nucleotide in hyperparams):
+                    continue
+                nucleotide = hyperparams[nucleotide]
+                if isinstance(nucleotide, ContinuousRange):
+                    gene[ak][j] += (nucleotide.end - nucleotide.start) * random.uniform(-max_cont_shift, max_cont_shift)
+                    gene[ak][j] = max(nucleotide.start, min(nucleotide.end, gene[ak][j]))
                     gene[ak][j] = round(gene[ak][j], 5)
                 else:
-                    index = nucleotide_space.index(nucleotide) + random.randint(-max_disc_shift, max_disc_shift)
-                    index = max(0, min(len(nucleotide_space) - 1, index))
-                    gene[ak][j] = nucleotide_space[index]
+                    index = nucleotide.index(nucleotide) + random.randint(-max_disc_shift, max_disc_shift)
+                    index = max(0, min(len(nucleotide) - 1, index))
+                    gene[ak][j] = nucleotide[index]
 
 
-def choose_nucleotides(nucleotide_space):
+def choose_nucleotides(nucleotide_space, hyperparams):
     # Choose specific arg and kwarg values from arg and kwarg options
     nucleotides = {'args': [
-        arg.sample() if isinstance(arg, ContinuousRange)
-        else random.choice(arg)
+        hyperparams[arg].sample() if isinstance(arg, str) and arg in hyperparams
+        else arg
         for arg in nucleotide_space['args']
     ], 'kwargs': {
-        key: value.sample() if isinstance(value, ContinuousRange)
-        else random.choice(value)
+        key: hyperparams[value].sample() if isinstance(value, str) and value in hyperparams
+        else value
         for key, value in nucleotide_space['kwargs'].items()
     }}
     return nucleotides
 
 
-def choose_gene_from_space(gene_space):
+def choose_gene_from_space(gene_space, hyperparams):
     # choose a random function from supplied choices
     nucleotide_space = random.choice(gene_space)
     gene = deepcopy(nucleotide_space)
     if gene["train"] is None:
         return gene
-    nucleotides = choose_nucleotides(gene["train"])
+    nucleotides = choose_nucleotides(gene["train"], hyperparams)
     # add chosen nucleotides to the gene
     gene['train'].update(nucleotides)
     return gene
@@ -369,6 +395,7 @@ step 5. If running multiple generations
                 according to some function of their performance scores
 
 Future TODO:
-    Make ability to add steps before splitting data for ease of use with new data
+    Make ability to add steps before splitting data for ease of use with new data (Or user supplied generators?)
+    
     let mutation magnitude adjust during the run
 """
