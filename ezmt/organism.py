@@ -136,9 +136,9 @@ class Organism:
 
             new_inference = None
             if gene['inference']:
-                # Save inputs that come from training
-                for inp in gene['inference']['inputs']:
-                    if inp not in available_inputs:
+                # Save args that come from training
+                for inp in gene['inference']['args']:
+                    if inp not in available_inputs and inp in self.knowledge:
                         knowledge_to_save[inp] = self.knowledge[inp]
                 # Don't save the function itself. Save a reference.
                 inf_func = gene['inference']['func']
