@@ -13,7 +13,6 @@ import functools
 
 from ezmt.organism import Organism, dna2str
 from ezmt.config_validation import validate_config
-from ezmt.hyperparameters import ContinuousRange
 
 pp = pprint.PrettyPrinter(indent=4)
 
@@ -24,8 +23,8 @@ class ModelTuner:
             self,
             model_space: list,
             hyperparams: dict,
-            data: pd.DataFrame,
-            y_col: str,
+            data: pd.DataFrame = None,
+            y_col: str = None,
             generations: int = 1,
             pop_size: int = 20,
             goal: str = 'min'
@@ -333,6 +332,8 @@ def choose_gene_from_space(gene_space, hyperparams):
 
 
 def generate_stratified_folds(data, y_col, n_splits=5):
+    while data is None:
+        yield None, None, None, None  # Assumed to be supplied within a step in the model space
     x = data.drop(y_col, axis=1)
     y = data[y_col]
     skf = StratifiedKFold(n_splits=n_splits)
