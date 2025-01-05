@@ -60,17 +60,21 @@ class Organism:
         func = gene['func']
 
         if isinstance(func, str):  # if str, get it from values of state ('model.run' => 'model' is a key in state)
-            f = func.split('.')
-            func = state[f[0]]
-            for part in f[1:]:
-                if hasattr(func, part):
-                    func = getattr(func, part)
-                else:
-                    raise Exception(f'Could not get {part} from {func}')
+            func = self.get_func_from_string(func, state)
 
         # get data with matching genes from previous stage of development and apply function + args of next gene
         args = (state[arg] if isinstance(arg, str) and arg in state else arg for arg in gene['args'])
         return func, args, gene
+
+    def get_func_from_string(self, func, state):
+        f = func.split('.')
+        func = state[f[0]]
+        for part in f[1:]:
+            if hasattr(func, part):
+                func = getattr(func, part)
+            else:
+                raise Exception(f'Could not get {part} from {func}')
+        return func
 
     def _update_state(self, state, gene, output):
         # Update State
