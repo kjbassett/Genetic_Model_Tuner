@@ -32,7 +32,7 @@ class ModelTuner:
         # Generations can be used for batches of data and not for evolution
         self.model_space = validate_config(model_space, hyperparams)
         self.hyperparams = hyperparams
-        self.gpu_semaphore = asyncio.Semaphore(1)
+        self.gpu_semaphore = asyncio.Semaphore(1)  # Used to ensure only 1 process is accessing the GPU at a time
         self.data_fold_generator = generate_stratified_folds(data, y_col)
         self.generations = generations
         self.population_size = pop_size
@@ -119,13 +119,14 @@ class ModelTuner:
                 except KeyError:
                     raise KeyError(f'No state found for previous dna: {prev_dna}')
 
-                new_state = await self.run_gene(organism, i, state, pool)
+                new_state = self.run_gene(organism, i, state, pool)
                 unique_organisms[current_dna] = new_state
 
             # Wait for all processes for this decision point to complete
             for dna, output in unique_organisms.items():
-                if isinstance(output, Future):
-                    unique_organisms[dna] = output.result()
+                print(type(output))  # TODO Are we supposed to .result() futures? Do we ever get futures?
+                if isinstance(output, Future) or asyncio.iscoroutine(output):
+                    unique_organisms[dna] = await output
 
         # Each organism "remembers" what it has processed
         # knowledge is saved when the organism is saved, and it is loaded later to use during inference
@@ -141,6 +142,8 @@ class ModelTuner:
         func = organism.dna[gene_index]['train']['func']
         is_async = inspect.iscoroutinefunction(func)
         is_gpu = organism.dna[gene_index]['train']['gpu']
+        run_in_parent_process = organism.dna[gene_index]['train'].get('run_in_parent_process', False)
+        # TODO run_in_parent_process=True should be sorted to the end of the organisms so that other async/parallel jobs can start first
 
         # If GPU is used, process serially to avoid excessive context switching with the GPU
         if is_gpu:
@@ -154,12 +157,16 @@ class ModelTuner:
         loop = asyncio.get_running_loop()
         if is_async:
             # Async CPU
+            if run_in_parent_process:
+                return await organism.make_decision_async('train', gene_index, state)
             return await loop.run_in_executor(
                 pool,
-                functools.partial(run_async_in_process, organism.make_decision_async, 'train', gene_index, state)
+                organism.make_decision_async, 'train', gene_index, state
             )
         else:
             # Sync CPU
+            if run_in_parent_process:
+                return organism.make_decision('train', gene_index, state)
             return await loop.run_in_executor(
                 pool,
                 organism.make_decision, 'train', gene_index, state
@@ -242,10 +249,6 @@ class ModelTuner:
 
             # score is converted into fitness, which always follows highest-is-best
             return max(self.population)
-
-
-def run_async_in_process(async_func, *args, **kwargs):
-    return asyncio.run(async_func(*args, **kwargs))
 
 
 def natural_selection(
