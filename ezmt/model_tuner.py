@@ -140,7 +140,7 @@ class ModelTuner:
             return state
 
         func = organism.dna[gene_index]['train']['func']
-        func = organism.get_func_from_string(func) if isinstance(func, str) else func
+        func = organism.get_func_from_string(func, state) if isinstance(func, str) else func
         is_async = inspect.iscoroutinefunction(func)
         is_gpu = organism.dna[gene_index]['train']['gpu']
         run_in_parent_process = organism.dna[gene_index]['train'].get('run_in_parent_process', False)
