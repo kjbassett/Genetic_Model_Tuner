@@ -158,13 +158,7 @@ class ModelTuner:
         loop = asyncio.get_running_loop()
         if is_async:
             # Async CPU
-            if run_in_parent_process:
-                return await organism.make_decision_async('train', gene_index, state)
-            check_state_picklability(state)
-            return await loop.run_in_executor(
-                pool,
-                organism.make_decision_async, 'train', gene_index, state
-            )
+            return await organism.make_decision_async('train', gene_index, state)
         else:
             # Sync CPU
             if run_in_parent_process:
