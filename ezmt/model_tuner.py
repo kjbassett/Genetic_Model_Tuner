@@ -9,10 +9,10 @@ import pprint
 import time
 import inspect
 from copy import deepcopy
-import functools
 
 from ezmt.organism import Organism, dna2str
 from ezmt.config_validation import validate_config
+from ezmt.common_funcs import is_picklable
 
 pp = pprint.PrettyPrinter(indent=4)
 
@@ -160,6 +160,7 @@ class ModelTuner:
             # Async CPU
             if run_in_parent_process:
                 return await organism.make_decision_async('train', gene_index, state)
+            check_state_picklability(state)
             return await loop.run_in_executor(
                 pool,
                 organism.make_decision_async, 'train', gene_index, state
@@ -168,6 +169,7 @@ class ModelTuner:
             # Sync CPU
             if run_in_parent_process:
                 return organism.make_decision('train', gene_index, state)
+            check_state_picklability(state)
             return await loop.run_in_executor(
                 pool,
                 organism.make_decision, 'train', gene_index, state
@@ -351,44 +353,14 @@ def generate_stratified_folds(data, y_col, n_splits=5):
         i += 1
 
 
-"""
-step 1. Build skeleton of model with the following structure:
-    [
-        {                                   <- First step starts
-            name: some_name0
-            func: some_func0,
-            args: [
-                [arg0_0_0, arg0_0_1],     <- Possible choices for first argument of first step in model (list)
-                (arg0_1_min, arg0_1_max)  <- Range of choices for second argument of first step in model (tuple)
-            ]
-        }, 
-        {                                   <- Second step starts
-            name: some_name1
-            func: some_func1
-            args: [
-                (arg1_0_min, arg1_0_max), <- Range of choices for first argument of second step in model (tuple)
-                [arg1_1_0, arg1_1_1]      <- Possible choices for second argument of second step in model (list)
-            ]
-        }
-    ]
-    Assume that some_func's has an additional argument before the args listed that will hold the data from the
-        resulting step.
-    Each member of the population can be identified by their DNA
-    '0|0.6|False|a//1|True' => arg0_0|arg0_1|arg0_2|arg0_3//arg1_0|arg1_1
-step 2. Choose some subset of all possible combinations of choices from skeleton in step 1.
-step 3. Run:
-    For each step
-        For each *unique* combination of inputs and outputs according to subset from step 2
-            calculate new data
-    (In other words, don't do extra work! If 100 models have 2 choices for first step, do 2 calculations, not 100!)
-step 4. Evaluate all models performance
-step 5. If running multiple generations
-            Repeat step 3 and 4 until stopping condition is met
-            Base the parameters of the next generation off of the previous generation
-                according to some function of their performance scores
+def check_state_picklability(state):
+    if not is_picklable(state):
+        for k, v in state.items():
+            if not is_picklable(v):
+                raise ValueError(f'Cannot pickle non-picklable value: {k}={v}')
 
+"""
 Future TODO:
     Make ability to add steps before splitting data for ease of use with new data (Or user supplied generators?)
-    
-    let mutation magnitude adjust during the run
+    let mutation magnitude & probablility adjust during the run
 """
