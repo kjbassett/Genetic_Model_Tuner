@@ -119,7 +119,7 @@ class ModelTuner:
                 except KeyError:
                     raise KeyError(f'No state found for previous dna: {prev_dna}')
 
-                new_state = self.run_gene(organism, i, state, pool)
+                new_state = asyncio.create_task(self.run_gene(organism, i, state, pool))
                 unique_organisms[current_dna] = new_state
 
             # Wait for all processes for this decision point to complete
