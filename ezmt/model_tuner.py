@@ -1,7 +1,7 @@
 import asyncio
 import numpy as np
 import random
-from concurrent.futures import ProcessPoolExecutor, Future
+from concurrent.futures import ProcessPoolExecutor
 
 import pandas as pd
 from sklearn.model_selection import StratifiedKFold
@@ -124,9 +124,7 @@ class ModelTuner:
 
             # Wait for all processes for this decision point to complete
             for dna, output in unique_organisms.items():
-                print(type(output))  # TODO Are we supposed to .result() futures? Do we ever get futures?
-                if isinstance(output, Future) or asyncio.iscoroutine(output):
-                    unique_organisms[dna] = await output
+                unique_organisms[dna] = await output
 
         # Each organism "remembers" what it has processed
         # knowledge is saved when the organism is saved, and it is loaded later to use during inference
