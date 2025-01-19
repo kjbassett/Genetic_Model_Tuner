@@ -106,7 +106,7 @@ class ModelTuner:
                     key=lambda org: (False if org.dna[i]['train'] is None else True) and org.dna[i]['train']['gpu']
             ):
                 current_dna = dna2str(organism.dna[:i + 1])
-                print(f'Processing organism branch {organism.dna[i]}')
+                print(f'Processing organism branch {current_dna}')
                 # check if identical series of decisions up until this stage has already started calculating
                 if current_dna in unique_organisms.keys():
                     continue
