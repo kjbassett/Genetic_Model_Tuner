@@ -24,9 +24,7 @@ def validate_config(model_space, hyperparams):
             for fd_idx, function_dict in enumerate(gene_space):
                 if ti == 'train':  # we only need to validate the outer dict once
                     gene_space[fd_idx] = validate_outer_function_dict(function_dict, names_seen)
-                gene_space[fd_idx][ti] = validate_inner_function_dict(function_dict[ti], available_args)
-                print(gs_idx, fd_idx, ti)
-                print(available_args)
+                gene_space[fd_idx][ti] = validate_inner_function_dict(gene_space[fd_idx][ti], available_args)
             model_space[gs_idx] = gene_space  # replace the original list with the validated one
     return model_space
 
