@@ -56,7 +56,7 @@ class Organism:
     def _make_decision_common(self, mode, gene_index, state):
         if not self.dna[gene_index][mode]:
             return None, None, None  # gene is inactive in this mode, return current state
-        gene = self.dna[gene_index][mode]  # training version of current gene
+        gene = self.dna[gene_index][mode]  # training / inference version of current gene
         func = gene['func']
 
         if isinstance(func, str):  # if str, get it from values of state ('model.run' => 'model' is a key in state)
@@ -94,7 +94,7 @@ class Organism:
     def reproduce(self):
         return Organism(deepcopy(self.dna))
 
-    def predict(self, x_new):
+    def predict(self, x_new=None):
         # TODO does this belong in the Organism class or the ModelTuner class?
         state = {**self.knowledge, 'x_new': x_new}
         for gene_index in range(len(self.dna)):
@@ -170,7 +170,7 @@ class Organism:
             knowledge = json.load(f)
         # Some knowledge is stored in pickle files. Load them
         for key, value in knowledge.items():
-            if value.endswith('.pkl'):
+            if isinstance(value, str) and value.endswith('.pkl'):
                 import pickle
                 with open(os.path.join(folder, value), 'rb') as pkl_file:
                     knowledge[key] = pickle.load(pkl_file)
