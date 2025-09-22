@@ -76,6 +76,11 @@ class Organism:
                 raise Exception(f'Could not get {part} from {func}')
         return func
 
+    def is_gene_async(self, gene_index, mode, state):
+        func = self.dna[gene_index]['train']['func']
+        func = self.get_func_from_string(func, state) if isinstance(func, str) else func
+        is_async = inspect.iscoroutinefunction(func)
+
     def _update_state(self, state, gene, output):
         # Update State
         ons = gene['outputs']  # output names
@@ -94,11 +99,14 @@ class Organism:
     def reproduce(self):
         return Organism(deepcopy(self.dna))
 
-    def predict(self, x_new=None):
+    async def predict(self, x_new=None):
         # TODO does this belong in the Organism class or the ModelTuner class?
         state = {**self.knowledge, 'x_new': x_new}
         for gene_index in range(len(self.dna)):
-            state = self.make_decision('inference', gene_index, state)
+            if self.is_gene_async(gene_index, 'inference', state):
+                state = await self.make_decision_async('inference', gene_index, state)
+            else:
+                state = self.make_decision('inference', gene_index, state)
         if 'y_pred' in state:
             return state['y_pred']
         else:

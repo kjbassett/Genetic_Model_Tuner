@@ -107,7 +107,7 @@ class ModelTuner:
             ):
                 current_dna = dna2str(organism.dna[:i + 1])
                 print(f'Processing organism branch {current_dna}')
-                # check if identical series of decisions up until this stage has already started calculating
+                # check if identical series of decisions up to this stage has already started calculating
                 if current_dna in unique_organisms.keys():
                     continue
 
@@ -138,12 +138,11 @@ class ModelTuner:
         if not organism.dna[gene_index]['train']:
             return state
 
-        func = organism.dna[gene_index]['train']['func']
-        func = organism.get_func_from_string(func, state) if isinstance(func, str) else func
-        is_async = inspect.iscoroutinefunction(func)
+        is_async = organism.is_gene_async(gene_index, 'train', state)
         is_gpu = organism.dna[gene_index]['train']['gpu']
         run_in_parent_process = organism.dna[gene_index]['train'].get('run_in_parent_process', False)
         # TODO run_in_parent_process=True should be sorted to the end of the organisms so that other async/parallel jobs can start first
+        #  also it should be assigned False by default for train branch in config validation
 
         # If GPU is used, process serially to avoid excessive context switching with the GPU
         if is_gpu:
