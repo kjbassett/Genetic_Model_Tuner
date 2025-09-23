@@ -1,4 +1,5 @@
 from copy import deepcopy
+import inspect
 import os
 import json
 import datetime
@@ -77,9 +78,10 @@ class Organism:
         return func
 
     def is_gene_async(self, gene_index, mode, state):
-        func = self.dna[gene_index]['train']['func']
+        func = self.dna[gene_index][mode]['func']
         func = self.get_func_from_string(func, state) if isinstance(func, str) else func
         is_async = inspect.iscoroutinefunction(func)
+        return is_async
 
     def _update_state(self, state, gene, output):
         # Update State
