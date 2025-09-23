@@ -40,19 +40,19 @@ class Organism:
     
     def make_decision(self, mode, gene_index, state):
         # Synchronous decision-making logic
-        func, args, gene = self._make_decision_common(mode, gene_index, state)
+        func, args, kwargs, output_names = self._make_decision_common(mode, gene_index, state)
         if not func:
             return state
-        output = func(*args, **gene['kwargs'])
-        return self._update_state(state, gene, output)
+        output = func(*args, **kwargs)
+        return self._update_state(state, output_names, output)
 
     async def make_decision_async(self, mode, gene_index, state):
         # Asynchronous decision-making logic
-        func, args, gene = self._make_decision_common(mode, gene_index, state)
+        func, args, kwargs, output_names = self._make_decision_common(mode, gene_index, state)
         if not func:
             return state
-        output = await func(*args, **gene['kwargs'])
-        return self._update_state(state, gene, output)
+        output = await func(*args, **kwargs)
+        return self._update_state(state, output_names, output)
 
     def _make_decision_common(self, mode, gene_index, state):
         if not self.dna[gene_index][mode]:
@@ -65,7 +65,10 @@ class Organism:
 
         # get data with matching genes from previous stage of development and apply function + args of next gene
         args = (state[arg] if isinstance(arg, str) and arg in state else arg for arg in gene['args'])
-        return func, args, gene
+        kwargs = {k: state[v] if isinstance(v, str) and v in state else v for k, v in gene['kwargs'].items()}
+
+        output_names = gene['outputs']  # output names
+        return func, args, kwargs, output_names
 
     def get_func_from_string(self, func, state):
         f = func.split('.')
@@ -83,16 +86,14 @@ class Organism:
         is_async = inspect.iscoroutinefunction(func)
         return is_async
 
-    def _update_state(self, state, gene, output):
+    def _update_state(self, state, output_names, output):
         # Update State
-        ons = gene['outputs']  # output names
-        if ons:
-            if len(ons) > 1:
-                output = {o: output[j] for j, o in enumerate(ons)}
-            elif len(ons) == 1:
-                output = {o: output for o in ons}
+        if output_names:
+            if len(output_names) > 1:
+                output = {o: output[j] for j, o in enumerate(output_names)}
+            elif len(output_names) == 1:
+                output = {o: output for o in output_names}
             state = {**state, **output}
-
         return state
 
     def mate(self, other):
