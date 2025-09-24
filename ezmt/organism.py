@@ -8,15 +8,13 @@ import importlib
 
 class Organism:
 
-    def __init__(self, dna=None, knowledge=None):
-        if dna is None:
-            self.dna = []
-        else:
-            self.dna = dna
-        if knowledge is None:
-            self.knowledge = {}
-        else:
-            self.knowledge = knowledge
+    def __init__(self, dna=None, parameters=None, knowledge=None):
+        # self.dna represents the sequence of functions
+        self.dna = dna if dna else []
+        # self.parameters holds the arg values for the functions in self.dna
+        self.parameters = parameters if parameters else {}
+        # self.knowledge holds data generated from training that is needed for inference
+        self.knowledge = knowledge if knowledge else {}
         self.score = 0
         self.fitness = 0
 
@@ -55,20 +53,39 @@ class Organism:
         return self._update_state(state, output_names, output)
 
     def _make_decision_common(self, mode, gene_index, state):
-        if not self.dna[gene_index][mode]:
-            return None, None, None  # gene is inactive in this mode, return current state
+        # extract the right function, args, kwargs, and output names from the gene at index gene_index
         gene = self.dna[gene_index][mode]  # training / inference version of current gene
+        if not gene:
+            return None, None, None, None  # gene is inactive in this mode, return current state
         func = gene['func']
 
         if isinstance(func, str):  # if str, get it from values of state ('model.run' => 'model' is a key in state)
             func = self.get_func_from_string(func, state)
 
         # get data with matching genes from previous stage of development and apply function + args of next gene
-        args = (state[arg] if isinstance(arg, str) and arg in state else arg for arg in gene['args'])
-        kwargs = {k: state[v] if isinstance(v, str) and v in state else v for k, v in gene['kwargs'].items()}
+        args = []
+        for arg in gene['args']:
+            if isinstance(arg, str):
+                if arg in state:
+                    args.append(state[arg])
+                elif arg in self.parameters:
+                    args.append(self.parameters[arg])
+            else:
+                args.append(arg)
+
+        kwargs = {}
+        for key, val in gene['kwargs']:
+            if isinstance(val, str):
+                if val in state:
+                    kwargs[key] = state[val]
+                elif val in self.parameters:
+                    kwargs[key] = self.parameters[val]
+            else:
+                kwargs[key] = val
 
         output_names = gene['outputs']  # output names
         return func, args, kwargs, output_names
+
 
     def get_func_from_string(self, func, state):
         f = func.split('.')
@@ -172,6 +189,12 @@ class Organism:
                 'inference': new_inference
             })
 
+            # add parameters to dna for saving
+            dna_copy = {
+                "dna": dna_copy,
+                "parameters": self.parameters
+            }
+
         return dna_copy, knowledge_to_save
 
     @classmethod
@@ -188,10 +211,11 @@ class Organism:
 
         # Load DNA
         with open(os.path.join(folder, "dna.json"), "r") as f:
-            dna_loaded = json.load(f)
+            dna = json.load(f)
+            dna, parameters = dna['dna'], dna['parameters']
         # We don't save actual functions, just their references. We need to load them
         inference_outputs = []
-        for gene in dna_loaded:
+        for gene in dna:
             # Train is not needed right now. Maybe in the future we will want to train more after saving and loading.
             if gene['inference']:
                 func_ref = gene['inference']['func']
@@ -200,7 +224,7 @@ class Organism:
                     continue
                 gene['inference']['func'] = load_function_from_reference(func_ref)
 
-        return cls(dna_loaded, knowledge)
+        return cls(dna, parameters, knowledge)
 
     def reset(self):
         self.score = 0

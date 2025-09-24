@@ -7,7 +7,6 @@ import pandas as pd
 from sklearn.model_selection import StratifiedKFold
 import pprint
 import time
-import inspect
 from copy import deepcopy
 
 from ezmt.organism import Organism, dna2str
@@ -22,7 +21,7 @@ class ModelTuner:
     def __init__(
             self,
             model_space: list,
-            hyperparams: dict,
+            hyperparam_space: dict,
             data: pd.DataFrame = None,
             y_col: str = None,
             generations: int = 1,
@@ -30,8 +29,8 @@ class ModelTuner:
             goal: str = 'min'
     ):
         # Generations can be used for batches of data and not for evolution
-        self.model_space = validate_config(model_space, hyperparams)
-        self.hyperparams = hyperparams
+        self.model_space = validate_config(model_space, hyperparam_space)
+        self.hyperparam_space = hyperparam_space
         self.gpu_semaphore = asyncio.Semaphore(1)  # Used to ensure only 1 process is accessing the GPU at a time
         self.data_fold_generator = generate_stratified_folds(data, y_col)
         self.generations = generations
@@ -43,10 +42,9 @@ class ModelTuner:
     def populate_init(self):
         # Generate initial population
         for _ in range(self.population_size):
-            organism = Organism()
-            for gene_space in self.model_space:
-                gene = choose_gene_from_space(gene_space, self.hyperparams)  # Chooses nucleotide space and then specifies nucleotides
-                organism.add_gene(gene)
+            dna = choose_dna(self.model_space)
+            hyperparams = choose_hyperparams(self.hyperparam_space)
+            organism = Organism(dna, hyperparams)
             self.population.append(organism)
 
     def select_and_reproduce(
@@ -55,8 +53,6 @@ class ModelTuner:
             reproduction='asexual',
             gene_mutate_prob=0.05,
             nuc_mutate_prob=0.1,
-            max_discrete_shift=2,
-            max_continuous_shift=0.05
     ):
         # Generate population from previous generation
         # keep top models
@@ -80,11 +76,9 @@ class ModelTuner:
             mutate(
                 child,
                 self.model_space,
-                self.hyperparams,
+                self.hyperparam_space,
                 gene_mutate_prob,
                 nuc_mutate_prob,
-                max_discrete_shift,
-                max_continuous_shift
             )
             new_pop.append(child)
         self.population = new_pop
@@ -141,8 +135,9 @@ class ModelTuner:
         is_async = organism.is_gene_async(gene_index, 'train', state)
         is_gpu = organism.dna[gene_index]['train']['gpu']
         run_in_parent_process = organism.dna[gene_index]['train'].get('run_in_parent_process', False)
-        # TODO run_in_parent_process=True should be sorted to the end of the organisms so that other async/parallel jobs can start first
-        #  also it should be assigned False by default for train branch in config validation
+        # TODO organisms with current step param run_in_parent_process=True should be sorted to the end of the organisms
+        #  so that other async/parallel jobs can start first.
+        #  Also it should be assigned False by default for train branch in config validation
 
         # If GPU is used, process serially to avoid excessive context switching with the GPU
         if is_gpu:
@@ -261,72 +256,47 @@ def natural_selection(
     return np.random.choice(population, size=n_survivors, replace=False, p=prob_dist)
 
 
-def mutate(organism, model_space, hyperparams, func_prob, nuc_prob, max_disc_shift, max_cont_shift):
+def mutate(organism, model_space, hyperparam_space, func_prob, nuc_prob):
     """
     mutates the genes of an organism, making it make different decisions
 
-    :param model_space:
     :param organism: object of class Organism
+    :param model_space:
+    :param hyperparam_space: all possible values of parameters to plug into dna
     :param func_prob: probability of mutation of the gene's function
     :param nuc_prob: probability of mutation of each of gene's nucleotides
     :param max_disc_shift: max discrete shift = the max change in index of the nucleotide option if options are discrete
     :param max_cont_shift: max continuous shift = the max change in the value of a nucleotide if options are continuous
     max_cont_shift is a percentage of the range from min to max value of nucleotide
     """
+    # modify organism.dna
     for i, gene in enumerate(organism.dna):
         gene_space = model_space[i]
-        #
-        #  you left off here because it needs to mutate train version
-
-        if len(gene_space) > 1 and random.uniform(0, 1) <= func_prob:
-            organism.dna[i] = choose_gene_from_space(gene_space, hyperparams)
-            # choosing a new gene (function) chooses random nucleotides (args), so no need to mutate this gene further
+        if len(gene_space) > 1 and random.random() <= func_prob:
+            organism.dna[i] = choose_gene(gene_space)
             continue
 
-        # find corresponding gene_space in model_space
-        gene_variant = next((space for space in gene_space if space['name'] == gene['name']), None)
-        if gene_variant is None:
-            raise ValueError(f'Could not find corresponding gene_space in model_space.\n {[dna2str(gene)]}')
-
-        gene = gene['train']
-        gene_variant = gene_variant['train']
-        if gene is None:
-            continue
-
-        # Modify nucleotides slightly but still remain in same gene variant
-        for ak in ['args', 'kwargs']:
-            for j, nucleotide in enumerate(gene[ak]) if ak == 'args' else gene[ak].items():
-                if random.random() > nuc_prob:
-                    continue
-                nucleotide = gene_variant[ak][j]  # space for specific nucleotide
-                if isinstance(nucleotide, str) and nucleotide in hyperparams:
-                    gene[ak][j] = hyperparams[nucleotide].mutate(gene[ak][j])
+    # modify organism.hyperparameters
+    for hp, val in organism.hyperparams:
+        if random.random() <= nuc_prob:
+            organism.hyperparams[hp] = hyperparam_space[hp].mutate(val)
 
 
-def choose_nucleotides(nucleotide_space, hyperparams):
-    # Choose specific arg and kwarg values from arg and kwarg options
-    nucleotides = {'args': [
-        hyperparams[arg].sample() if isinstance(arg, str) and arg in hyperparams
-        else arg
-        for arg in nucleotide_space['args']
-    ], 'kwargs': {
-        key: hyperparams[value].sample() if isinstance(value, str) and value in hyperparams
-        else value
-        for key, value in nucleotide_space['kwargs'].items()
-    }}
-    return nucleotides
+def choose_dna(dna_space):
+    dna = []
+    for gene_space in dna_space:
+        # choose a random function from supplied choices
+        gene = choose_gene(gene_space)
+        dna.append(gene)
+    return dna
 
 
-def choose_gene_from_space(gene_space, hyperparams):
-    # choose a random function from supplied choices
-    nucleotide_space = random.choice(gene_space)
-    gene = deepcopy(nucleotide_space)
-    if gene["train"] is None:
-        return gene
-    nucleotides = choose_nucleotides(gene["train"], hyperparams)
-    # add chosen nucleotides to the gene
-    gene['train'].update(nucleotides)
-    return gene
+def choose_gene(gene_space):
+    return deepcopy(random.choice(gene_space))
+
+
+def choose_hyperparams(hyperparam_space):
+    return {key: val.sample() for key, val in hyperparam_space.items()}
 
 
 def generate_stratified_folds(data, y_col, n_splits=5):
