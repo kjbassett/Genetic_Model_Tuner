@@ -22,10 +22,10 @@ class Organism:
         return self.fitness < other.fitness
 
     def __eq__(self, other):
-        return dna2str(self.dna) == dna2str(other.dna)
+        return self.dna == other.dna and self.parameters == other.parameters
 
     def __hash__(self):
-        return hash(dna2str(self.dna))
+        return hash(dna2str(self.dna) + str(self.parameters))
 
     def __str__(self):
         return dna2str(self.dna)
@@ -117,7 +117,7 @@ class Organism:
         pass
 
     def reproduce(self):
-        return Organism(deepcopy(self.dna))
+        return Organism(deepcopy(self.dna), deepcopy(self.parameters))
 
     async def predict(self, x_new=None):
         # TODO does this belong in the Organism class or the ModelTuner class?
