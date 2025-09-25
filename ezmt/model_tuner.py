@@ -273,13 +273,13 @@ def mutate(organism, model_space, hyperparam_space, func_prob, nuc_prob):
     for i, gene in enumerate(organism.dna):
         gene_space = model_space[i]
         if len(gene_space) > 1 and random.random() <= func_prob:
-            organism.dna[i] = choose_gene(gene_space)
+            organism.dna[i] = choose_gene([g for g in gene_space if g != organism.dna[i]])
             continue
 
-    # modify organism.hyperparameters
-    for hp, val in organism.hyperparams:
+    # modify organism.parameters
+    for hp, val in organism.parameters.items():
         if random.random() <= nuc_prob:
-            organism.hyperparams[hp] = hyperparam_space[hp].mutate(val)
+            organism.parameters[hp] = hyperparam_space[hp].mutate(val)
 
 
 def choose_dna(dna_space):
