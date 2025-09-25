@@ -74,7 +74,7 @@ class Organism:
                 args.append(arg)
 
         kwargs = {}
-        for key, val in gene['kwargs']:
+        for key, val in gene['kwargs'].items():
             if isinstance(val, str):
                 if val in state:
                     kwargs[key] = state[val]
