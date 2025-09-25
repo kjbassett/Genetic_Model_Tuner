@@ -1,3 +1,4 @@
+from copy import deepcopy
 import unittest
 from unittest.mock import patch, MagicMock
 from ezmt.model_tuner import ModelTuner, dna2str
@@ -17,7 +18,7 @@ class TestModelTunerPopulationInitialization(unittest.TestCase):
             'feature2': [10, 20, 30, 40, 50, 60, 70, 80],
             'label': [0, 1, 0, 1, 0, 1, 0, 1]
         })
-        model_space = [
+        dna_space = [
             [
                 {'name': 'gene1',
                  'train': {'func': lambda x: x, 'inputs': 'x_train', 'outputs': 'output1', 'args': [], 'kwargs': {}}},
@@ -28,10 +29,11 @@ class TestModelTunerPopulationInitialization(unittest.TestCase):
             [
                 {'name': 'gene3',
                  'train': {'func': lambda x, y: x + y + 1, 'inputs': 'output2', 'outputs': 'output3',
-                           'args': [ContinuousRange(0, 10)], 'kwargs': {}}}
+                           'args': ['example_hp'], 'kwargs': {}}}
             ]
         ]
-        self.model_tuner = ModelTuner(model_space, data, y_col='label', pop_size=20)
+        hyperparam_space = {'example_hp': ContinuousRange(0, 10)}
+        self.model_tuner = ModelTuner(dna_space, hyperparam_space, data, y_col='label', pop_size=20)
 
     def test_population_size(self):
         """Test that population is initialized with the correct size"""
@@ -53,13 +55,13 @@ class TestModelTunerPopulationInitialization(unittest.TestCase):
                 self.assertIn(gene['name'], [gs['name'] for gs in gene_space],
                               "Organism gene names should match options in model space.")
 
-    def test_population_diversity(self):
+    def test_dna_diversity(self):
         """Test that the initial population has varied genes based on model space options"""
         self.model_tuner.populate_init()
         # Collect DNA strings to check for diversity in initial population
-        dna_strings = {str(organism.dna) for organism in self.model_tuner.population}
+        gene_pool = {str(organism.dna) for organism in self.model_tuner.population}
         # A population with high diversity should have multiple unique DNA sequences
-        self.assertEqual(len(dna_strings), 20, "Population appears to lack diversity.")
+        self.assertEqual(len(gene_pool), 2, "Population appears to lack diversity.")
 
     def test_gene_diversity(self):
         """Test that each gene + arg combination has a variety of choices in the population"""
@@ -67,7 +69,16 @@ class TestModelTunerPopulationInitialization(unittest.TestCase):
         # Collect DNA strings to check for diversity in initial population
         for i in range(len(self.model_tuner.model_space)):
             gene_pool = {str(organism.dna[i]) for organism in self.model_tuner.population}
-            self.assertGreater(len(gene_pool), 1, "Each organism's gene options should be diverse.")
+            if i == 0:
+                self.assertEqual(len(gene_pool), 2, "The total unique genes for index 0 should be 2.")
+            elif i == 1:
+                self.assertEqual(len(gene_pool), 1, "The total unique genes for index 0 should be 1.")
+    def test_parameter_diversity(self):
+        """Test that each gene + arg combination has a variety of choices in the population"""
+        self.model_tuner.populate_init()
+        # Collect DNA strings to check for diversity in initial population
+        gene_pool = {str(organism.parameters) for organism in self.model_tuner.population}
+        self.assertEqual(len(gene_pool), 20)
 
     def test_gene_initialization_with_random_choices(self):
         """Test that all gene names are represented in the initial population"""
@@ -196,15 +207,25 @@ class TestModelTunerSelectionAndReproduction(unittest.TestCase):
         # Model space with variation in functions and arguments
         self.model_space = [
             [
-                {'name': 'gene1', 'train': {'func': lambda x: x, 'inputs': 'x_train', 'outputs': 'output1', 'args': [ContinuousRange(0, 10)], 'kwargs': {'param1': ContinuousRange(0, 10)}}},
-                {'name': 'gene2', 'train': {'func': lambda x: x**2, 'inputs': 'x_train', 'outputs': 'output2', 'args': [ContinuousRange(5, 15)], 'kwargs': {'param2': ContinuousRange(0, 10)}}}
+                {'name': 'gene1', 'train': {'func': lambda x: x, 'inputs': 'x_train', 'outputs': 'output1', 'args': ['arg1'], 'kwargs': {'param1': 'kwarg1'}}},
+                {'name': 'gene2', 'train': {'func': lambda x: x**2, 'inputs': 'x_train', 'outputs': 'output2', 'args': ['arg2'], 'kwargs': {'param2': 'kwarg2'}}}
             ],
             [
-                {'name': 'gene3', 'train': {'func': lambda x: x + 1, 'inputs': 'output1', 'outputs': 'output3', 'args': [ContinuousRange(0, 10)], 'kwargs': {'param3': ContinuousRange(0, 10)}}},
-                {'name': 'gene4', 'train': {'func': lambda x: x - 1, 'inputs': 'output2', 'outputs': 'output4', 'args': [ContinuousRange(5, 15)], 'kwargs': {'param4': ContinuousRange(0, 10)}}}
+                {'name': 'gene3', 'train': {'func': lambda x: x + 1, 'inputs': 'output1', 'outputs': 'output3', 'args': ['arg3'], 'kwargs': {'param3': 'kwarg3'}}},
+                {'name': 'gene4', 'train': {'func': lambda x: x - 1, 'inputs': 'output2', 'outputs': 'output4', 'args': ['arg4'], 'kwargs': {'param4': 'kwarg4'}}}
             ]
         ]
-        self.model_tuner = ModelTuner(self.model_space, data, y_col='label', pop_size=1000)
+        self.hyperparam_space = {
+            'arg1': ContinuousRange(0, 10),
+            'arg2': ContinuousRange(5, 15),
+            'arg3': ContinuousRange(0, 10),
+            'arg4': ContinuousRange(5, 15),
+            'kwarg1': ContinuousRange(0, 10),
+            'kwarg2': ContinuousRange(0, 10),
+            'kwarg3': ContinuousRange(0, 10),
+            'kwarg4': ContinuousRange(0, 10)
+        }
+        self.model_tuner = ModelTuner(self.model_space, self.hyperparam_space, data, y_col='label', pop_size=1000)
         self.model_tuner.populate_init()
 
         # assign scores for testing elitism
@@ -221,14 +242,14 @@ class TestModelTunerSelectionAndReproduction(unittest.TestCase):
         """
         # Set mutation probabilities
         gene_mutate_prob = 0.2
-        nuc_mutate_prob = 0.5
+        nuc_mutate_prob = 0.1
 
         # Set elitism to 0 to isolate testing probabilities
         elitism = 0
 
         # Capture the original DNA of the entire population
-        original_dna_set = {dna2str(organism.dna) for organism in self.model_tuner.population}
-        
+        original_organisms = deepcopy(self.model_tuner.population)
+
         # Perform reproduction with set mutation probabilities
         self.model_tuner.select_and_reproduce(
             elitism=elitism,
@@ -236,34 +257,26 @@ class TestModelTunerSelectionAndReproduction(unittest.TestCase):
             nuc_mutate_prob=nuc_mutate_prob
         )
 
-        # Capture the new DNA
-        new_dna_list = [dna2str(organism.dna) for organism in self.model_tuner.population]
-
         # Count how many organisms have DNA that matches any in the original DNA set (i.e., unchanged)
-        num_unchanged = sum(1 for dna in new_dna_list if dna in original_dna_set)
+        num_unchanged = sum(1 for organism in self.model_tuner.population if organism in original_organisms)
 
         # Calculate the probability that an organism remains unchanged
         # The probability that a gene does not mutate is (1 - gene_mutate_prob)
-        # The probability that each nucleotide does not mutate is (1 - nuc_mutate_prob)
+        # The probability that each parameter does not mutate is (1 - nuc_mutate_prob)
         n_mutatable_genes = len([gene for gene in self.model_space if len(gene) > 1])
         prob_no_gene_mutation = (1 - gene_mutate_prob) ** n_mutatable_genes
 
-        n_mutatable_nucleotides = 0
-        # IMPORTANT, we assume that all options for all genes in one slot of the model space have the same # of nucleotides.
-        # See docstring, makes calculation easier.
-        for gene_space in self.model_space:
-            n_mutatable_nucleotides += len(gene_space[0]['train']['args'])
-            n_mutatable_nucleotides += len(gene_space[0]['train']['kwargs'])
-
+        n_mutatable_nucleotides = len(self.hyperparam_space)
         prob_no_nucleotide_mutation = (1 - nuc_mutate_prob) ** n_mutatable_nucleotides
+
         prob_no_mutation = prob_no_gene_mutation * prob_no_nucleotide_mutation
 
         # Expected number of unchanged organisms
         population_size = len(self.model_tuner.population)
-        expected_unchanged = population_size * prob_no_mutation
-        std_dev = np.sqrt(population_size * prob_no_mutation * (1 - prob_no_mutation))  # Binomial
 
         # Use a confidence interval to check if the observed number of unchanged organisms is reasonable
+        expected_unchanged = population_size * prob_no_mutation
+        std_dev = np.sqrt(population_size * prob_no_mutation * (1 - prob_no_mutation))  # Binomial
         lower_bound = expected_unchanged - 2 * std_dev
         upper_bound = expected_unchanged + 2 * std_dev
 
@@ -282,9 +295,7 @@ class TestModelTunerSelectionAndReproduction(unittest.TestCase):
         self.model_tuner.select_and_reproduce(
             elitism=elitism,
             gene_mutate_prob=1.0,  # 100% chance of mutating the gene's function
-            nuc_mutate_prob=1.0,   # 100% chance of mutating each gene's nucleotide
-            max_discrete_shift=2,
-            max_continuous_shift=0.05
+            nuc_mutate_prob=1.0    # 100% chance of mutating each gene's nucleotide
         )
 
         # Collect the DNA of the new population
@@ -314,7 +325,7 @@ class TestModelTunerExperiencePopulation(unittest.TestCase):
                 {'name': 'gene3', 'train': {'func': time.time, 'outputs': 'output2', 'gpu': True}}
             ]
         ]
-        self.model_tuner = ModelTuner(self.model_space, data, y_col='label', pop_size=20)
+        self.model_tuner = ModelTuner(self.model_space, {}, data, y_col='label', pop_size=20)
         self.model_tuner.populate_init()
 
 
