@@ -144,6 +144,8 @@ class Organism:
         formatted_dna, knowledge_to_save = self.create_formatted_dna()
         with open(f"{folder}/dna.json", "w") as f:
             json.dump(formatted_dna, f, indent=4)
+        with open(f"{folder}/parameters.json", "w") as f:
+            json.dump(self.parameters, f, indent=4)
         with open(f"{folder}/knowledge.json", "w") as f:
             json.dump(knowledge_to_save, f, cls=ThePickler, folder=folder, indent=4)
 
@@ -189,12 +191,6 @@ class Organism:
                 'inference': new_inference
             })
 
-            # add parameters to dna for saving
-            dna_copy = {
-                "dna": dna_copy,
-                "parameters": self.parameters
-            }
-
         return dna_copy, knowledge_to_save
 
     @classmethod
@@ -212,7 +208,7 @@ class Organism:
         # Load DNA
         with open(os.path.join(folder, "dna.json"), "r") as f:
             dna = json.load(f)
-            dna, parameters = dna['dna'], dna['parameters']
+
         # We don't save actual functions, just their references. We need to load them
         inference_outputs = []
         for gene in dna:
@@ -223,6 +219,10 @@ class Organism:
                 if parent in knowledge or parent in inference_outputs:
                     continue
                 gene['inference']['func'] = load_function_from_reference(func_ref)
+
+        # Load parameters
+        with open(os.path.join(folder, "parameters.json"), "r") as f:
+            parameters = json.load(f)
 
         return cls(dna, parameters, knowledge)
 
