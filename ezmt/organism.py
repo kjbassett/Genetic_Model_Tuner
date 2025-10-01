@@ -123,6 +123,8 @@ class Organism:
         # TODO does this belong in the Organism class or the ModelTuner class?
         state = {**self.knowledge, 'x_new': x_new}
         for gene_index in range(len(self.dna)):
+            if not self.dna[gene_index]['inference']: # TODO organize make_decision and model_tuner.run_gene
+                continue
             if self.is_gene_async(gene_index, 'inference', state):
                 state = await self.make_decision_async('inference', gene_index, state)
             else:
