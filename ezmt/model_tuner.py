@@ -39,12 +39,12 @@ class ModelTuner:
         self.goal = goal
         self.metrics = []
 
-    def populate_init(self):
+    def populate_init(self, run_name):
         # Generate initial population
         for _ in range(self.population_size):
             dna = choose_dna(self.model_space)
             hyperparams = choose_hyperparams(self.hyperparam_space)
-            organism = Organism(dna, hyperparams)
+            organism = Organism(run_name, dna, hyperparams)
             self.population.append(organism)
 
     def select_and_reproduce(
@@ -210,12 +210,12 @@ class ModelTuner:
             else:
                 model.fitness = (model.score - worst) / (best - worst)
 
-    async def run(self):
+    async def run(self, run_name):
         pp.pprint(self.model_space)
         with ProcessPoolExecutor(8) as pool:
             for gen in range(self.generations):
                 if gen == 0:
-                    self.populate_init()
+                    self.populate_init(run_name)
                 else:
                     self.select_and_reproduce()
                 print(f'Starting generation {gen + 1}/{self.generations}')
