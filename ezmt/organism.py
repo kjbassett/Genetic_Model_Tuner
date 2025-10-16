@@ -7,6 +7,8 @@ import importlib
 
 import pandas as pd
 
+from ezmt.the_pickler import ThePickler
+
 
 class Organism:
 
@@ -290,32 +292,3 @@ def dna2str(dna):
     return dna_str
 
 
-class ThePickler(json.JSONEncoder):
-    def __init__(self, folder="", *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.folder = folder
-        if not os.path.exists(self.folder):
-            os.makedirs(self.folder)
-
-    def default(self, obj):
-        try:
-            return super().default(obj)
-        except TypeError:
-            # if object is of type dataframe or series, save to a csv
-            if isinstance(obj, (pd.DataFrame, pd.Series)):
-                file_name = f"{id(obj)}.csv"
-                path = os.path.join(self.folder, file_name)
-                obj.to_csv(path)
-                return file_name
-            # otherwise try to pickle object
-            import pickle
-
-            try:
-                pickled_data = pickle.dumps(obj)
-                file_name = f"{id(obj)}.pkl"
-                with open(os.path.join(self.folder, file_name), "wb") as f:
-                    f.write(pickled_data)
-                return file_name
-            except Exception as e:
-                print(f"Error pickling object: {str(e)}")
-                return str(obj)
