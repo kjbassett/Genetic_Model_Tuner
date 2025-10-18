@@ -4,15 +4,15 @@ import os
 import json
 import datetime
 import importlib
-
 import pandas as pd
+import pickle
 
 from ezmt.the_pickler import ThePickler
 
 
 class Organism:
 
-    def __init__(self, name, dna, parameters, knowledge=None, folder=None):
+    def __init__(self, name, dna, parameters, knowledge=None, save_load_funcs=None, folder=None):
         self.name = name
         # self.dna represents the sequence of functions
         self.dna = dna if dna else []
@@ -20,6 +20,8 @@ class Organism:
         self.parameters = parameters if parameters else {}
         # self.knowledge holds data generated from training that is needed for inference
         self.knowledge = knowledge if knowledge else {}
+        # self.save_load_funcs holds custom saving and loading logic for state/knowledge objects
+        self.save_load_funcs = save_load_funcs if save_load_funcs else {}
         if not folder:
             folder = f"organisms/{self.name}/{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
         self.folder = folder
@@ -78,6 +80,8 @@ class Organism:
             )  # gene is inactive in this mode, return current state
         func = gene["func"]
 
+        # TODO all string logic below this could be cleaned up. There is duplicate code, and args could be gotten from recusive getattr too
+
         if isinstance(
             func, str
         ):  # if str, get it from values of state ('model.run' => 'model' is a key in state)
@@ -91,6 +95,10 @@ class Organism:
                     args.append(state[arg])
                 elif arg in self.parameters:
                     args.append(self.parameters[arg])
+                elif arg.startswith('self.'):
+                    attr_name = arg.split('.')[1]
+                    if hasattr(self, attr_name):
+                        args.append(getattr(self, attr_name))
             else:
                 args.append(arg)
 
@@ -101,6 +109,10 @@ class Organism:
                     kwargs[key] = state[val]
                 elif val in self.parameters:
                     kwargs[key] = self.parameters[val]
+                elif val.startswith('self.'):
+                    attr_name = val.split('.')[1]
+                    if hasattr(self, attr_name):
+                        kwargs[key] = getattr(self, attr_name)
             else:
                 kwargs[key] = val
 
@@ -137,7 +149,7 @@ class Organism:
         pass
 
     def reproduce(self):
-        return Organism(deepcopy(self.dna), deepcopy(self.parameters))
+        return Organism(self.name, deepcopy(self.dna), deepcopy(self.parameters), self.save_load_funcs)
 
     async def predict(self, x_new=None, log_state=False):
         folder = os.path.join(self.folder, "predictions", datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
@@ -155,22 +167,41 @@ class Organism:
 
             if log_state:
                 create_folder(folder)
-                json.dump(state, f, cls=ThePickler, folder=folder, indent=4)
+                with open(os.path.join(folder, f"{gene_index}.json")) as f:
+                    json.dump(state, f, cls=ThePickler, folder=folder, indent=4)
         if "y_pred" in state:
             return state["y_pred"]
         else:
             raise Exception("No output found after last gene in the organism.")
 
     def save(self):
-        # save params
-        formatted_dna, knowledge_to_save = self.create_formatted_dna()
         create_folder(self.folder)
+
+        # save dna
+        formatted_dna, knowledge_to_save = self.create_formatted_dna()
         with open(f"{self.folder}/dna.json", "w") as f:
             json.dump(formatted_dna, f, indent=4)
+
+        # save parameters
         with open(f"{self.folder}/parameters.json", "w") as f:
             json.dump(self.parameters, f, indent=4)
-        with open(f"{self.folder}/knowledge.json", "w") as f:
-            json.dump(knowledge_to_save, f, cls=ThePickler, folder=folder, indent=4)
+
+        # save state aka knowledge
+        if self.knowledge:
+            for key, val in self.knowledge.items():
+                # if there is a custom save function provided for this state object
+                if key in self.save_load_funcs:
+                    # save it and replace the object in self.knowledge with the file name
+                    self.knowledge[key] = self.save_load_funcs[key]['save'](self.folder, key, val)
+            with open(f"{self.folder}/knowledge.json", "w") as f:
+                json.dump(knowledge_to_save, f, cls=ThePickler, folder=self.folder, indent=4)
+
+        # save the custom saving and loading functions
+        if self.save_load_funcs:
+            with open(f"{self.folder}/save_load_funcs.json", "w") as f:
+                json.dump(knowledge_to_save, f, cls=ThePickler, folder=self.folder, indent=4)
+
+
 
     def create_formatted_dna(self):
         """
@@ -217,15 +248,27 @@ class Organism:
     @classmethod
     def load(cls, name, folder):
         folder = f"organisms/{name}/{folder}"
+
+        # Load custom saving and loading logic
+        save_load_funcs = {}
+        path = os.path.join(folder, "save_load_funcs.json")
+        if os.path.exists(path):
+            with open(path, "r") as f:
+                save_load_funcs = json.load(f)
+            # Some knowledge is stored in pickle files. Load them
+            for key, value in save_load_funcs.items():
+                with open(os.path.join(folder, value), "rb") as pkl_file:
+                    save_load_funcs[key] = pickle.load(pkl_file)
+
         # Load knowledge
         with open(os.path.join(folder, "knowledge.json"), "r") as f:
             knowledge = json.load(f)
         # Some knowledge is stored in pickle files. Load them
         for key, value in knowledge.items():
             if isinstance(value, str):
-                if value.endswith(".pkl"):
-                    import pickle
-
+                if key in save_load_funcs:
+                    knowledge[key] = save_load_funcs[key](folder, value)
+                elif value.endswith(".pkl"):
                     with open(os.path.join(folder, value), "rb") as pkl_file:
                         knowledge[key] = pickle.load(pkl_file)
                 elif value.endswith(".csv"):
@@ -250,12 +293,12 @@ class Organism:
         with open(os.path.join(folder, "parameters.json"), "r") as f:
             parameters = json.load(f)
 
-        return cls(name, dna, parameters, knowledge, folder)
+        return cls(name, dna, parameters, knowledge, save_load_funcs, folder)
 
     def reset(self):
         self.score = 0
         self.fitness = 0
-        self.knowledge = None
+        self.knowledge = {}
 
 
 def get_function_reference(func):
@@ -275,6 +318,7 @@ def load_function_from_reference(func_ref):
 
     return func
 
+
 def create_folder(folder):
     if not os.path.exists(folder):
         os.makedirs(folder)
@@ -290,5 +334,3 @@ def dna2str(dna):
                 dna_str += f", {key}={value}"
         dna_str += ")"
     return dna_str
-
-

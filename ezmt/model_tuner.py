@@ -22,6 +22,7 @@ class ModelTuner:
             self,
             model_space: list,
             hyperparam_space: dict,
+            save_load_funcs: dict = None,
             data: pd.DataFrame = None,
             y_col: str = None,
             generations: int = 1,
@@ -31,6 +32,7 @@ class ModelTuner:
         # Generations can be used for batches of data and not for evolution
         self.model_space = validate_config(model_space, hyperparam_space)
         self.hyperparam_space = hyperparam_space
+        self.save_load_funcs = save_load_funcs if save_load_funcs else {}
         self.gpu_semaphore = asyncio.Semaphore(1)  # Used to ensure only 1 process is accessing the GPU at a time
         self.data_fold_generator = generate_stratified_folds(data, y_col)
         self.generations = generations
@@ -44,7 +46,7 @@ class ModelTuner:
         for _ in range(self.population_size):
             dna = choose_dna(self.model_space)
             hyperparams = choose_hyperparams(self.hyperparam_space)
-            organism = Organism(run_name, dna, hyperparams)
+            organism = Organism(run_name, dna, hyperparams, self.save_load_funcs)
             self.population.append(organism)
 
     def select_and_reproduce(
@@ -273,7 +275,8 @@ def mutate(organism, model_space, hyperparam_space, func_prob, nuc_prob):
     for i, gene in enumerate(organism.dna):
         gene_space = model_space[i]
         if len(gene_space) > 1 and random.random() <= func_prob:
-            organism.dna[i] = choose_gene([g for g in gene_space if g != organism.dna[i]])
+            available_genes = [g for g in gene_space if g != organism.dna[i]]
+            organism.dna[i] = choose_gene(available_genes)
             continue
 
     # modify organism.parameters
