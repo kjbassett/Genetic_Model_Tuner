@@ -33,23 +33,23 @@ class TestModelTunerPopulationInitialization(unittest.TestCase):
             ]
         ]
         hyperparam_space = {'example_hp': ContinuousRange(0, 10)}
-        self.model_tuner = ModelTuner(dna_space, hyperparam_space, data, y_col='label', pop_size=20)
+        self.model_tuner = ModelTuner(dna_space, hyperparam_space, data=data, y_col='label', pop_size=20)
 
     def test_population_size(self):
         """Test that population is initialized with the correct size"""
-        self.model_tuner.populate_init()
+        self.model_tuner.populate_init('test')
         self.assertEqual(len(self.model_tuner.population), 20, "Population size does not match specified pop_size.")
 
     def test_gene_length(self):
         """Test that each organism in the population is initialized with the correct gene structure"""
-        self.model_tuner.populate_init()
+        self.model_tuner.populate_init('test')
         for organism in self.model_tuner.population:
             self.assertIsInstance(organism, Organism, "Population should contain Organism instances.")
             self.assertEqual(len(organism.dna), len(self.model_tuner.model_space),
                              "Each organism's DNA length should match the model space length.")
 
     def test_gene_options(self):
-        self.model_tuner.populate_init()
+        self.model_tuner.populate_init('test')
         for organism in self.model_tuner.population:
             for gene, gene_space in zip(organism.dna, self.model_tuner.model_space):
                 self.assertIn(gene['name'], [gs['name'] for gs in gene_space],
@@ -57,7 +57,7 @@ class TestModelTunerPopulationInitialization(unittest.TestCase):
 
     def test_dna_diversity(self):
         """Test that the initial population has varied genes based on model space options"""
-        self.model_tuner.populate_init()
+        self.model_tuner.populate_init('test')
         # Collect DNA strings to check for diversity in initial population
         gene_pool = {str(organism.dna) for organism in self.model_tuner.population}
         # A population with high diversity should have multiple unique DNA sequences
@@ -65,7 +65,7 @@ class TestModelTunerPopulationInitialization(unittest.TestCase):
 
     def test_gene_diversity(self):
         """Test that each gene + arg combination has a variety of choices in the population"""
-        self.model_tuner.populate_init()
+        self.model_tuner.populate_init('test')
         # Collect DNA strings to check for diversity in initial population
         for i in range(len(self.model_tuner.model_space)):
             gene_pool = {str(organism.dna[i]) for organism in self.model_tuner.population}
@@ -75,14 +75,14 @@ class TestModelTunerPopulationInitialization(unittest.TestCase):
                 self.assertEqual(len(gene_pool), 1, "The total unique genes for index 0 should be 1.")
     def test_parameter_diversity(self):
         """Test that each gene + arg combination has a variety of choices in the population"""
-        self.model_tuner.populate_init()
+        self.model_tuner.populate_init('test')
         # Collect DNA strings to check for diversity in initial population
         gene_pool = {str(organism.parameters) for organism in self.model_tuner.population}
         self.assertEqual(len(gene_pool), 20)
 
     def test_gene_initialization_with_random_choices(self):
         """Test that all gene names are represented in the initial population"""
-        self.model_tuner.populate_init()
+        self.model_tuner.populate_init('test')
         gene_counts = {gene['name']: 0 for gene_space in self.model_tuner.model_space for gene in gene_space}
 
         for organism in self.model_tuner.population:
@@ -114,12 +114,12 @@ class TestModelTunerGoals(unittest.TestCase):
                 }
             }]
         ]
-        self.model_tuner_min = ModelTuner(model_space, data, y_col='label', goal='min')
-        self.model_tuner_max = ModelTuner(model_space, data, y_col='label', goal='max')
+        self.model_tuner_min = ModelTuner(model_space, {}, data=data, y_col='label', goal='min')
+        self.model_tuner_max = ModelTuner(model_space, {}, data=data, y_col='label', goal='max')
 
         # Populate the initial population for testing
-        self.model_tuner_min.populate_init()
-        self.model_tuner_max.populate_init()
+        self.model_tuner_min.populate_init('test')
+        self.model_tuner_max.populate_init('test')
 
     def test_fitness_score_range_min(self):
         """Test that the fitness scoring logic works correctly for minimization"""
@@ -225,8 +225,8 @@ class TestModelTunerSelectionAndReproduction(unittest.TestCase):
             'kwarg3': ContinuousRange(0, 10),
             'kwarg4': ContinuousRange(0, 10)
         }
-        self.model_tuner = ModelTuner(self.model_space, self.hyperparam_space, data, y_col='label', pop_size=1000)
-        self.model_tuner.populate_init()
+        self.model_tuner = ModelTuner(self.model_space, self.hyperparam_space, data=data, y_col='label', pop_size=1000)
+        self.model_tuner.populate_init('test')
 
         # assign scores for testing elitism
         for i, organism in enumerate(self.model_tuner.population):
@@ -258,21 +258,24 @@ class TestModelTunerSelectionAndReproduction(unittest.TestCase):
         )
 
         # Count how many organisms have DNA that matches any in the original DNA set (i.e., unchanged)
-        num_unchanged = sum(1 for organism in self.model_tuner.population if organism in original_organisms)
+        num_unchanged = len([o for o in self.model_tuner.population if o in original_organisms])
 
         # Calculate the probability that an organism remains unchanged
         # The probability that a gene does not mutate is (1 - gene_mutate_prob)
         # The probability that each parameter does not mutate is (1 - nuc_mutate_prob)
-        n_mutatable_genes = len([gene for gene in self.model_space if len(gene) > 1])
+        n_mutatable_genes = sum(1 for slot in self.model_space if len(slot) > 1)
         prob_no_gene_mutation = (1 - gene_mutate_prob) ** n_mutatable_genes
+        print(prob_no_gene_mutation)
 
         n_mutatable_nucleotides = len(self.hyperparam_space)
         prob_no_nucleotide_mutation = (1 - nuc_mutate_prob) ** n_mutatable_nucleotides
+        print(prob_no_nucleotide_mutation)
 
         prob_no_mutation = prob_no_gene_mutation * prob_no_nucleotide_mutation
 
         # Expected number of unchanged organisms
         population_size = len(self.model_tuner.population)
+        print(population_size)
 
         # Use a confidence interval to check if the observed number of unchanged organisms is reasonable
         expected_unchanged = population_size * prob_no_mutation
@@ -310,9 +313,9 @@ class TestModelTunerExperiencePopulation(unittest.TestCase):
     def setUp(self):
         # Sample data and model space setup with variation for testing
         data = pd.DataFrame({
-            'feature1': [1, 2, 3, 4, 5, 6, 7, 8],
-            'feature2': [10, 20, 30, 40, 50, 60, 70, 80],
-            'label': [0, 1, 0, 1, 0, 1, 0, 1]
+            'feature1': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            'feature2': [10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
+            'label': [0, 1, 0, 1, 0, 1, 0, 1, 0, 1]
         })
         
         # Model space with variation in functions and arguments
@@ -325,11 +328,11 @@ class TestModelTunerExperiencePopulation(unittest.TestCase):
                 {'name': 'gene3', 'train': {'func': time.time, 'outputs': 'output2', 'gpu': True}}
             ]
         ]
-        self.model_tuner = ModelTuner(self.model_space, {}, data, y_col='label', pop_size=20)
-        self.model_tuner.populate_init()
+        self.model_tuner = ModelTuner(self.model_space, {}, data=data, y_col='label', pop_size=20)
+        self.model_tuner.populate_init('test')
 
 
-    @patch('organism.Organism.make_decision')
+    @patch('ezmt.organism.Organism.make_decision')
     def test_correct_number_of_decisions_on_correct_processes(self, mock_make_decision):
         # TODO This test should be broken up
         # 1. Tests that the right number of jobs are put through the multiprocessing pool
