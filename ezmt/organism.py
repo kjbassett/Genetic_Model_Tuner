@@ -149,7 +149,7 @@ class Organism:
         pass
 
     def reproduce(self):
-        return Organism(self.name, deepcopy(self.dna), deepcopy(self.parameters), self.save_load_funcs)
+        return Organism(self.name, deepcopy(self.dna), deepcopy(self.parameters), save_load_funcs=self.save_load_funcs)
 
     async def predict(self, x_new=None, log_state=False):
         folder = os.path.join(self.folder, "predictions", datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
@@ -167,6 +167,7 @@ class Organism:
 
             if log_state:
                 create_folder(folder)
+                # TODO use custom savers
                 with open(os.path.join(folder, f"{gene_index}.json")) as f:
                     json.dump(state, f, cls=ThePickler, folder=folder, indent=4)
         if "y_pred" in state:
@@ -263,7 +264,7 @@ class Organism:
         # Load knowledge
         with open(os.path.join(folder, "knowledge.json"), "r") as f:
             knowledge = json.load(f)
-        # Some knowledge is stored in pickle files. Load them
+        # Some knowledge is stored in other files. Load them
         for key, value in knowledge.items():
             if isinstance(value, str):
                 if key in save_load_funcs:

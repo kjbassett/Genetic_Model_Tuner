@@ -46,7 +46,7 @@ class ModelTuner:
         for _ in range(self.population_size):
             dna = choose_dna(self.model_space)
             hyperparams = choose_hyperparams(self.hyperparam_space)
-            organism = Organism(run_name, dna, hyperparams, self.save_load_funcs)
+            organism = Organism(run_name, dna, hyperparams, save_load_funcs=self.save_load_funcs)
             self.population.append(organism)
 
     def select_and_reproduce(
