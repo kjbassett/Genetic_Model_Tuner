@@ -3,6 +3,8 @@ import os
 
 import pandas as pd
 
+from ezmt.common_funcs import is_picklable
+
 
 class ThePickler(json.JSONEncoder):
     def __init__(self, folder="", *args, **kwargs):
@@ -33,3 +35,10 @@ class ThePickler(json.JSONEncoder):
             except Exception as e:
                 print(f"Error pickling object: {str(e)}")
                 return str(obj)
+
+
+def check_state_picklability(state):
+    if not is_picklable(state):
+        for k, v in state.items():
+            if not is_picklable(v):
+                raise ValueError(f'Cannot pickle non-picklable value: {k}={v}')

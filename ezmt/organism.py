@@ -1,3 +1,4 @@
+import asyncio
 from copy import deepcopy
 import inspect
 import os
@@ -7,7 +8,7 @@ import importlib
 import pandas as pd
 import pickle
 
-from ezmt.the_pickler import ThePickler
+from ezmt.the_pickler import ThePickler, check_state_picklability
 
 
 class Organism:
@@ -45,6 +46,35 @@ class Organism:
 
     def add_gene(self, gene):
         self.dna.append(gene)
+
+    async def run_gene(self, mode, gene_index, state, pool=None, log_state=False):
+        if not self.dna[gene_index][mode]:
+            return state
+
+        is_async = self.is_gene_async(gene_index, 'train', state)
+        run_in_parent_process = self.dna[gene_index][mode].get('run_in_parent_process', False)
+        # TODO organisms with current step param run_in_parent_process=True should be sorted to the end of the organisms
+        #  so that other async/parallel jobs can start first.
+        #  Also it should be assigned False by default for train branch in config validation
+        if is_async:
+            # Async CPU
+            new_state = await self.make_decision_async('train', gene_index, state)
+        elif run_in_parent_process:
+            new_state = self.make_decision('train', gene_index, state)
+        elif pool:
+            check_state_picklability(state)
+            loop = asyncio.get_running_loop()
+            new_state = await loop.run_in_executor(
+                pool,
+                self.make_decision, 'train', gene_index, state
+            )
+        else:
+            new_state = await asyncio.to_thread(self.make_decision, 'train', gene_index, state)
+
+        if log_state:
+            folder = self.folder + f'/{mode}_log'
+            self.save_state(folder, f"{gene_index}.json", new_state)
+        return new_state
 
     def make_decision(self, mode, gene_index, state):
         # Synchronous decision-making logic
@@ -151,25 +181,12 @@ class Organism:
     def reproduce(self):
         return Organism(self.name, deepcopy(self.dna), deepcopy(self.parameters), save_load_funcs=self.save_load_funcs)
 
-    async def predict(self, x_new=None, log_state=False):
+    async def predict(self, x_new=None, log_states=False):
         folder = os.path.join(self.folder, "predictions", datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
         # TODO does this belong in the Organism class or the ModelTuner class?
         state = {**self.knowledge, "x_new": x_new}
         for gene_index in range(len(self.dna)):
-            if not self.dna[gene_index][
-                "inference"
-            ]:  # TODO organize make_decision and model_tuner.run_gene
-                continue
-            if self.is_gene_async(gene_index, "inference", state):
-                state = await self.make_decision_async("inference", gene_index, state)
-            else:
-                state = self.make_decision("inference", gene_index, state)
-
-            if log_state:
-                create_folder(folder)
-                # TODO use custom savers
-                with open(os.path.join(folder, f"{gene_index}.json")) as f:
-                    json.dump(state, f, cls=ThePickler, folder=folder, indent=4)
+            state = await self.run_gene("inference", gene_index, state, log_state=log_states)
         if "y_pred" in state:
             return state["y_pred"]
         else:
@@ -189,20 +206,22 @@ class Organism:
 
         # save state aka knowledge
         if self.knowledge:
-            for key, val in self.knowledge.items():
-                # if there is a custom save function provided for this state object
-                if key in self.save_load_funcs:
-                    # save it and replace the object in self.knowledge with the file name
-                    self.knowledge[key] = self.save_load_funcs[key]['save'](self.folder, key, val)
-            with open(f"{self.folder}/knowledge.json", "w") as f:
-                json.dump(knowledge_to_save, f, cls=ThePickler, folder=self.folder, indent=4)
+            self.save_state(self.folder, "knowledge.json", self.knowledge)
 
         # save the custom saving and loading functions
         if self.save_load_funcs:
             with open(f"{self.folder}/save_load_funcs.json", "w") as f:
                 json.dump(knowledge_to_save, f, cls=ThePickler, folder=self.folder, indent=4)
 
-
+    def save_state(self, folder, file_name, state):
+        create_folder(folder)
+        for key, val in state:
+            # if there is a custom save function provided for this state object
+            if key in self.save_load_funcs:
+                # save it and replace the object in self.knowledge with the file name
+                state[key] = self.save_load_funcs[key]['save'](folder, key, val)
+        with open(f"{folder}/{file_name}", "w") as f:
+            json.dump(state, f, cls=ThePickler, folder=folder, indent=4)
 
     def create_formatted_dna(self):
         """

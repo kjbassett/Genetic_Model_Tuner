@@ -11,7 +11,7 @@ from copy import deepcopy
 
 from ezmt.organism import Organism, dna2str
 from ezmt.config_validation import validate_config
-from ezmt.common_funcs import is_picklable
+from ezmt.the_pickler import check_state_picklability
 
 pp = pprint.PrettyPrinter(indent=4)
 
@@ -85,7 +85,7 @@ class ModelTuner:
             new_pop.append(child)
         self.population = new_pop
 
-    async def experience_population(self, state, pool):
+    async def experience_population(self, state, pool, log_states=False):
         # Just as we experience the universe, the universe experiences us
         # for each decision point, process only unique chains of decisions + args from first decision point to current
 
@@ -116,7 +116,20 @@ class ModelTuner:
                 except KeyError:
                     raise KeyError(f'No state found for previous dna: {prev_dna}')
 
-                new_state = asyncio.create_task(self.run_gene(organism, i, state, pool))
+                is_gpu = organism.dna[i]['train']['gpu']
+                if is_gpu:
+                    async with self.gpu_semaphore:
+                        new_state = asyncio.create_task(
+                            organism.run_gene('train', i, state, pool, log_state=log_states)
+                        )
+                else:
+                    new_state = asyncio.create_task(
+                        organism.run_gene('train', i, state, pool, log_state=log_states)
+                    )
+                # TODO organisms with current step param run_in_parent_process=True should be sorted to the end of the organisms
+                #  so that other async/parallel jobs can start first.
+                #  Also it should be assigned False by default for train branch in config validation
+
                 unique_organisms[current_dna] = new_state
 
             # Wait for all processes for this decision point to complete
@@ -130,39 +143,6 @@ class ModelTuner:
 
         return unique_organisms
 
-    async def run_gene(self, organism, gene_index, state, pool):
-        if not organism.dna[gene_index]['train']:
-            return state
-
-        is_async = organism.is_gene_async(gene_index, 'train', state)
-        is_gpu = organism.dna[gene_index]['train']['gpu']
-        run_in_parent_process = organism.dna[gene_index]['train'].get('run_in_parent_process', False)
-        # TODO organisms with current step param run_in_parent_process=True should be sorted to the end of the organisms
-        #  so that other async/parallel jobs can start first.
-        #  Also it should be assigned False by default for train branch in config validation
-
-        # If GPU is used, process serially to avoid excessive context switching with the GPU
-        if is_gpu:
-            async with self.gpu_semaphore:
-                if is_async:
-                    # Async GPU
-                    return await organism.make_decision_async('train', gene_index, state)
-                else:
-                    # Sync GPU
-                    return await asyncio.to_thread(organism.make_decision, 'train', gene_index, state)
-        loop = asyncio.get_running_loop()
-        if is_async:
-            # Async CPU
-            return await organism.make_decision_async('train', gene_index, state)
-        else:
-            # Sync CPU
-            if run_in_parent_process:
-                return organism.make_decision('train', gene_index, state)
-            check_state_picklability(state)
-            return await loop.run_in_executor(
-                pool,
-                organism.make_decision, 'train', gene_index, state
-            )
 
     def score_fitness(self, unique_organisms):
         # TODO fix nan
@@ -212,7 +192,7 @@ class ModelTuner:
             else:
                 model.fitness = (model.score - worst) / (best - worst)
 
-    async def run(self, run_name):
+    async def run(self, run_name, log_states=False):
         pp.pprint(self.model_space)
         with ProcessPoolExecutor(8) as pool:
             for gen in range(self.generations):
@@ -229,7 +209,8 @@ class ModelTuner:
                 x_train, x_test, y_train, y_test = next(self.data_fold_generator)
                 results = await self.experience_population(
                     {'x_train': x_train, 'x_test': x_test, 'y_train': y_train, 'y_test': y_test},
-                    pool
+                    pool,
+                    log_states=log_states
                 )
 
                 self.score_fitness(results)
@@ -317,12 +298,6 @@ def generate_stratified_folds(data, y_col, n_splits=5):
         yield x_train, x_test, y_train, y_test
         i += 1
 
-
-def check_state_picklability(state):
-    if not is_picklable(state):
-        for k, v in state.items():
-            if not is_picklable(v):
-                raise ValueError(f'Cannot pickle non-picklable value: {k}={v}')
 
 """
 Future TODO:
