@@ -276,9 +276,10 @@ class Organism:
             with open(path, "r") as f:
                 save_load_funcs = json.load(f)
             # Some knowledge is stored in pickle files. Load them
-            for key, value in save_load_funcs.items():
-                with open(os.path.join(folder, value), "rb") as pkl_file:
-                    save_load_funcs[key] = pickle.load(pkl_file)
+            for key, save_load in save_load_funcs.items():
+                for sl in ["save", "load"]:
+                    with open(os.path.join(folder, save_load[sl]), "rb") as pkl_file:
+                        save_load_funcs[key][sl] = pickle.load(pkl_file)
 
         # Load knowledge
         with open(os.path.join(folder, "knowledge.json"), "r") as f:
@@ -287,7 +288,7 @@ class Organism:
         for key, value in knowledge.items():
             if isinstance(value, str):
                 if key in save_load_funcs:
-                    knowledge[key] = save_load_funcs[key](folder, value)
+                    knowledge[key] = save_load_funcs[key]["load"](folder, value)
                 elif value.endswith(".pkl"):
                     with open(os.path.join(folder, value), "rb") as pkl_file:
                         knowledge[key] = pickle.load(pkl_file)
