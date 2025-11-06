@@ -215,7 +215,7 @@ class Organism:
 
     def save_state(self, folder, file_name, state):
         create_folder(folder)
-        for key, val in state:
+        for key, val in state.items():
             # if there is a custom save function provided for this state object
             if key in self.save_load_funcs:
                 # save it and replace the object in self.knowledge with the file name
