@@ -211,7 +211,7 @@ class Organism:
         # save the custom saving and loading functions
         if self.save_load_funcs:
             with open(f"{self.folder}/save_load_funcs.json", "w") as f:
-                json.dump(knowledge_to_save, f, cls=ThePickler, folder=self.folder, indent=4)
+                json.dump(self.save_load_funcs, f, cls=ThePickler, folder=self.folder, indent=4)
 
     def save_state(self, folder, file_name, state):
         create_folder(folder)
