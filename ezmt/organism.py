@@ -13,7 +13,9 @@ from ezmt.the_pickler import ThePickler, check_state_picklability
 
 class Organism:
 
-    def __init__(self, name, dna, parameters, knowledge=None, save_load_funcs=None, folder=None):
+    def __init__(
+            self, name, dna, parameters, knowledge=None, save_load_funcs=None, folder=None
+    ):
         self.name = name
         # self.dna represents the sequence of functions
         self.dna = dna if dna else []
@@ -48,55 +50,41 @@ class Organism:
         self.dna.append(gene)
 
     async def run_gene(self, mode, gene_index, state, pool=None, log_state=False):
+        # TODO model tuner should create a task, not await run_gene
         if not self.dna[gene_index][mode]:
             return state
 
-        is_async = self.is_gene_async(gene_index, 'train', state)
-        run_in_parent_process = self.dna[gene_index][mode].get('run_in_parent_process', False)
+        func, args, kwargs, output_names, is_async, run_in_parent_process = (
+            self.get_gene_data(mode, gene_index, state)
+        )
+
+        if not func:
+            return state
         # TODO organisms with current step param run_in_parent_process=True should be sorted to the end of the organisms
         #  so that other async/parallel jobs can start first.
         #  Also it should be assigned False by default for train branch in config validation
         if is_async:
             # Async CPU
-            new_state = await self.make_decision_async('train', gene_index, state)
+            output = await func(*args, **kwargs)
         elif run_in_parent_process:
-            new_state = self.make_decision('train', gene_index, state)
+            output = func(*args, **kwargs)
         elif pool:
             check_state_picklability(state)
             loop = asyncio.get_running_loop()
-            new_state = await loop.run_in_executor(
-                pool,
-                self.make_decision, 'train', gene_index, state
+            output = await loop.run_in_executor(
+                pool, func, *args, **kwargs
             )
         else:
-            new_state = await asyncio.to_thread(self.make_decision, 'train', gene_index, state)
+            output = await asyncio.to_thread(func, *args, **kwargs)
+
+        new_state = self._update_state(state, output_names, output)
 
         if log_state:
-            folder = self.folder + f'/{mode}_log'
+            folder = self.folder + f"/{mode}_log"
             self.save_state(folder, f"{gene_index}.json", new_state)
         return new_state
 
-    def make_decision(self, mode, gene_index, state):
-        # Synchronous decision-making logic
-        func, args, kwargs, output_names = self._make_decision_common(
-            mode, gene_index, state
-        )
-        if not func:
-            return state
-        output = func(*args, **kwargs)
-        return self._update_state(state, output_names, output)
-
-    async def make_decision_async(self, mode, gene_index, state):
-        # Asynchronous decision-making logic
-        func, args, kwargs, output_names = self._make_decision_common(
-            mode, gene_index, state
-        )
-        if not func:
-            return state
-        output = await func(*args, **kwargs)
-        return self._update_state(state, output_names, output)
-
-    def _make_decision_common(self, mode, gene_index, state):
+    def get_gene_data(self, mode, gene_index, state):
         # extract the right function, args, kwargs, and output names from the gene at index gene_index
         gene = self.dna[gene_index][
             mode
@@ -107,13 +95,15 @@ class Organism:
                 None,
                 None,
                 None,
+                False,
+                False,
             )  # gene is inactive in this mode, return current state
         func = gene["func"]
 
         # TODO all string logic below this could be cleaned up. There is duplicate code, and args could be gotten from recusive getattr too
 
         if isinstance(
-            func, str
+                func, str
         ):  # if str, get it from values of state ('model.run' => 'model' is a key in state)
             func = self.get_func_from_string(func, state)
 
@@ -125,8 +115,8 @@ class Organism:
                     args.append(state[arg])
                 elif arg in self.parameters:
                     args.append(self.parameters[arg])
-                elif arg.startswith('self.'):
-                    attr_name = arg.split('.')[1]
+                elif arg.startswith("self."):
+                    attr_name = arg.split(".")[1]
                     if hasattr(self, attr_name):
                         args.append(getattr(self, attr_name))
             else:
@@ -139,31 +129,34 @@ class Organism:
                     kwargs[key] = state[val]
                 elif val in self.parameters:
                     kwargs[key] = self.parameters[val]
-                elif val.startswith('self.'):
-                    attr_name = val.split('.')[1]
+                elif val.startswith("self."):
+                    attr_name = val.split(".")[1]
                     if hasattr(self, attr_name):
                         kwargs[key] = getattr(self, attr_name)
             else:
                 kwargs[key] = val
 
         output_names = gene["outputs"]  # output names
-        return func, args, kwargs, output_names
+
+        is_async = inspect.iscoroutinefunction(func)
+
+        run_in_parent_process = self.dna[gene_index][mode].get(
+            "run_in_parent_process", False
+        )
+        return func, args, kwargs, output_names, is_async, run_in_parent_process
 
     def get_func_from_string(self, func, state):
         f = func.split(".")
-        func = state[f[0]]
-        for part in f[1:]:
-            if hasattr(func, part):
-                func = getattr(func, part)
-            else:
-                raise Exception(f"Could not get {part} from {func}")
+        if f[0] in state:
+            func = state[f[0]]
+            for part in f[1:]:
+                if hasattr(func, part):
+                    func = getattr(func, part)
+                else:
+                    raise Exception(f"Could not get {part} from {func}")
+        else:
+            func = load_function_from_reference(func)
         return func
-
-    def is_gene_async(self, gene_index, mode, state):
-        func = self.dna[gene_index][mode]["func"]
-        func = self.get_func_from_string(func, state) if isinstance(func, str) else func
-        is_async = inspect.iscoroutinefunction(func)
-        return is_async
 
     def _update_state(self, state, output_names, output):
         # Update State
@@ -179,14 +172,25 @@ class Organism:
         pass
 
     def reproduce(self):
-        return Organism(self.name, deepcopy(self.dna), deepcopy(self.parameters), save_load_funcs=self.save_load_funcs)
+        return Organism(
+            self.name,
+            deepcopy(self.dna),
+            deepcopy(self.parameters),
+            save_load_funcs=self.save_load_funcs,
+        )
 
     async def predict(self, x_new=None, log_states=False):
-        folder = os.path.join(self.folder, "predictions", datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+        folder = os.path.join(
+            self.folder,
+            "predictions",
+            datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
+        )
         # TODO does this belong in the Organism class or the ModelTuner class?
         state = {**self.knowledge, "x_new": x_new}
         for gene_index in range(len(self.dna)):
-            state = await self.run_gene("inference", gene_index, state, log_state=log_states)
+            state = await self.run_gene(
+                "inference", gene_index, state, log_state=log_states
+            )
         if "y_pred" in state:
             return state["y_pred"]
         else:
@@ -211,7 +215,13 @@ class Organism:
         # save the custom saving and loading functions
         if self.save_load_funcs:
             with open(f"{self.folder}/save_load_funcs.json", "w") as f:
-                json.dump(self.save_load_funcs, f, cls=ThePickler, folder=self.folder, indent=4)
+                json.dump(
+                    self.save_load_funcs,
+                    f,
+                    cls=ThePickler,
+                    folder=self.folder,
+                    indent=4,
+                )
 
     def save_state(self, folder, file_name, state):
         create_folder(folder)
@@ -219,7 +229,7 @@ class Organism:
             # if there is a custom save function provided for this state object
             if key in self.save_load_funcs:
                 # save it and replace the object in self.knowledge with the file name
-                state[key] = self.save_load_funcs[key]['save'](folder, key, val)
+                state[key] = self.save_load_funcs[key]["save"](folder, key, val)
         with open(f"{folder}/{file_name}", "w") as f:
             json.dump(state, f, cls=ThePickler, folder=folder, indent=4)
 
@@ -293,7 +303,9 @@ class Organism:
                     with open(os.path.join(folder, value), "rb") as pkl_file:
                         knowledge[key] = pickle.load(pkl_file)
                 elif value.endswith(".csv"):
-                    knowledge[key] = pd.read_csv(value, index_col=0)
+                    knowledge[key] = pd.read_csv(
+                        os.path.join(folder, value), index_col=0
+                    )
 
         # Load DNA
         with open(os.path.join(folder, "dna.json"), "r") as f:
