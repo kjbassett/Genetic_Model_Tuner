@@ -1,5 +1,6 @@
 import asyncio
 from copy import deepcopy
+from functools import partial
 import inspect
 import os
 import json
@@ -14,7 +15,7 @@ from ezmt.the_pickler import ThePickler, check_state_picklability
 class Organism:
 
     def __init__(
-            self, name, dna, parameters, knowledge=None, save_load_funcs=None, folder=None
+        self, name, dna, parameters, knowledge=None, save_load_funcs=None, folder=None
     ):
         self.name = name
         # self.dna represents the sequence of functions
@@ -50,7 +51,6 @@ class Organism:
         self.dna.append(gene)
 
     async def run_gene(self, mode, gene_index, state, pool=None, log_state=False):
-        # TODO model tuner should create a task, not await run_gene
         if not self.dna[gene_index][mode]:
             return state
 
@@ -63,6 +63,7 @@ class Organism:
         # TODO organisms with current step param run_in_parent_process=True should be sorted to the end of the organisms
         #  so that other async/parallel jobs can start first.
         #  Also it should be assigned False by default for train branch in config validation
+        #  Model tuner should create a task, not await run_gene
         if is_async:
             # Async CPU
             output = await func(*args, **kwargs)
@@ -71,9 +72,7 @@ class Organism:
         elif pool:
             check_state_picklability(state)
             loop = asyncio.get_running_loop()
-            output = await loop.run_in_executor(
-                pool, func, *args, **kwargs
-            )
+            output = await loop.run_in_executor(pool, partial(func, *args, **kwargs))
         else:
             output = await asyncio.to_thread(func, *args, **kwargs)
 
@@ -103,7 +102,7 @@ class Organism:
         # TODO all string logic below this could be cleaned up. There is duplicate code, and args could be gotten from recusive getattr too
 
         if isinstance(
-                func, str
+            func, str
         ):  # if str, get it from values of state ('model.run' => 'model' is a key in state)
             func = self.get_func_from_string(func, state)
 
@@ -119,6 +118,8 @@ class Organism:
                     attr_name = arg.split(".")[1]
                     if hasattr(self, attr_name):
                         args.append(getattr(self, attr_name))
+                else:
+                    args.append(arg)
             else:
                 args.append(arg)
 
@@ -133,6 +134,8 @@ class Organism:
                     attr_name = val.split(".")[1]
                     if hasattr(self, attr_name):
                         kwargs[key] = getattr(self, attr_name)
+                else:
+                    kwargs[key] = val
             else:
                 kwargs[key] = val
 
@@ -180,11 +183,6 @@ class Organism:
         )
 
     async def predict(self, x_new=None, log_states=False):
-        folder = os.path.join(
-            self.folder,
-            "predictions",
-            datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
-        )
         # TODO does this belong in the Organism class or the ModelTuner class?
         state = {**self.knowledge, "x_new": x_new}
         for gene_index in range(len(self.dna)):
@@ -225,6 +223,7 @@ class Organism:
 
     def save_state(self, folder, file_name, state):
         create_folder(folder)
+        state = dict(state)  # shallow copy. save_load_funcs only apply at top layer
         for key, val in state.items():
             # if there is a custom save function provided for this state object
             if key in self.save_load_funcs:
