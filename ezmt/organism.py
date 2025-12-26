@@ -182,17 +182,17 @@ class Organism:
             save_load_funcs=self.save_load_funcs,
         )
 
-    async def predict(self, x_new=None, log_states=False):
+    async def predict(self, x_new=None, log_states=False, result_name="y_pred"):
         # TODO does this belong in the Organism class or the ModelTuner class?
         state = {**self.knowledge, "x_new": x_new}
         for gene_index in range(len(self.dna)):
             state = await self.run_gene(
                 "inference", gene_index, state, log_state=log_states
             )
-        if "y_pred" in state:
-            return state["y_pred"]
+        if result_name in state:
+            return state[result_name]
         else:
-            raise Exception("No output found after last gene in the organism.")
+            raise Exception(f"No output named {result_name} found after last gene in the organism.")
 
     def save(self):
         create_folder(self.folder)
@@ -275,8 +275,10 @@ class Organism:
         return dna_copy, knowledge_to_save
 
     @classmethod
-    def load(cls, name, folder):
-        folder = f"organisms/{name}/{folder}"
+    def load(cls, name, version: str = "latest"):
+        if version == "latest":
+            version = os.listdir(f"organisms/{name}/")[-1]
+        folder = f"organisms/{name}/{version}"
 
         # Load custom saving and loading logic
         save_load_funcs = {}

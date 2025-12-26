@@ -302,5 +302,5 @@ def generate_stratified_folds(data, y_col, n_splits=5):
 """
 Future TODO:
     Make ability to add steps before splitting data for ease of use with new data (Or user supplied generators?)
-    let mutation magnitude & probablility adjust during the run
+    let mutation magnitude & probability adjust during the run
 """
