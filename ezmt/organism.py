@@ -182,12 +182,12 @@ class Organism:
             save_load_funcs=self.save_load_funcs,
         )
 
-    async def predict(self, x_new=None, log_states=False, result_name="y_pred"):
+    async def run(self, mode: str = 'inference', data=None, log_states=False, result_name="y_pred"):
         # TODO does this belong in the Organism class or the ModelTuner class?
-        state = {**self.knowledge, "x_new": x_new}
+        state = {**self.knowledge, "x_new": data}
         for gene_index in range(len(self.dna)):
             state = await self.run_gene(
-                "inference", gene_index, state, log_state=log_states
+                mode, gene_index, state, log_state=log_states
             )
         if result_name in state:
             return state[result_name]
