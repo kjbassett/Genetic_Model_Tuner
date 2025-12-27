@@ -28,7 +28,7 @@ class Organism:
         self.save_load_funcs = save_load_funcs if save_load_funcs else {}
         if not folder:
             folder = f"organisms/{self.name}/{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
-        self.folder = folder
+        self.folder = self.new_folder(folder)
         self.score = 0
         self.fitness = 0
 
@@ -46,6 +46,12 @@ class Organism:
 
     def __repr__(self):
         return self.__str__()
+
+    def new_folder(self, folder_name=None):
+        if folder_name is None:
+             folder_name = f"{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+        self.folder = f"organisms/{self.name}/{folder_name}"
+        return self.folder
 
     def add_gene(self, gene):
         self.dna.append(gene)
