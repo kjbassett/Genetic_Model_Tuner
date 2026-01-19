@@ -15,7 +15,14 @@ from ezmt.the_pickler import ThePickler, check_state_picklability
 class Organism:
 
     def __init__(
-        self, name, dna, parameters, knowledge=None, save_load_funcs=None, folder=None
+            self,
+            name,
+            dna,
+            parameters,
+            knowledge=None,
+            save_load_funcs=None,
+            version=None,
+            gene_index=0,
     ):
         self.name = name
         # self.dna represents the sequence of functions
@@ -26,11 +33,10 @@ class Organism:
         self.knowledge = knowledge if knowledge else {}
         # self.save_load_funcs holds custom saving and loading logic for state/knowledge objects
         self.save_load_funcs = save_load_funcs if save_load_funcs else {}
-        if not folder:
-            folder = f"organisms/{self.name}/{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
-        self.folder = self.new_folder(folder)
+        self.folder = self.new_version(version)
         self.score = 0
         self.fitness = 0
+        self.gene_index = gene_index
 
     def __lt__(self, other):
         return self.fitness < other.fitness
@@ -47,10 +53,12 @@ class Organism:
     def __repr__(self):
         return self.__str__()
 
-    def new_folder(self, folder_name=None):
-        if folder_name is None:
-             folder_name = f"{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
-        self.folder = f"organisms/{self.name}/{folder_name}"
+    def new_version(self, name=None, version=None):
+        if name is None:
+            name = self.name
+        if version is None:
+            version = f"{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+        self.folder = f"organisms/{name}/{version}"
         return self.folder
 
     def add_gene(self, gene):
@@ -108,7 +116,7 @@ class Organism:
         # TODO all string logic below this could be cleaned up. There is duplicate code, and args could be gotten from recusive getattr too
 
         if isinstance(
-            func, str
+                func, str
         ):  # if str, get it from values of state ('model.run' => 'model' is a key in state)
             func = self.get_func_from_string(func, state)
 
@@ -188,17 +196,26 @@ class Organism:
             save_load_funcs=self.save_load_funcs,
         )
 
-    async def run(self, mode: str = 'inference', data=None, log_states=False, result_name="y_pred"):
+    async def run(
+            self,
+            mode: str = "inference",
+            data=None,
+            log_states=False,
+            result_name="y_pred"
+    ):
         # TODO does this belong in the Organism class or the ModelTuner class?
         state = {**self.knowledge, "x_new": data}
-        for gene_index in range(len(self.dna)):
+        while self.gene_index < len(self.dna):
             state = await self.run_gene(
-                mode, gene_index, state, log_state=log_states
+                mode, self.gene_index, state, log_state=log_states
             )
+            self.gene_index += 1
         if result_name in state:
             return state[result_name]
         else:
-            raise Exception(f"No output named {result_name} found after last gene in the organism.")
+            raise Exception(
+                f"No output named {result_name} found after last gene in the organism."
+            )
 
     def save(self):
         create_folder(self.folder)
@@ -281,11 +298,70 @@ class Organism:
         return dna_copy, knowledge_to_save
 
     @classmethod
-    def load(cls, name, version: str = "latest"):
+    def load(cls, name, version: str = "latest", gene_index=None):
         if version == "latest":
             version = os.listdir(f"organisms/{name}/")[-1]
         folder = f"organisms/{name}/{version}"
 
+        # Load DNA
+        with open(os.path.join(folder, "dna.json"), "r") as f:
+            dna = json.load(f)
+
+        # load save_load_funcs for use in loading knowledge
+        save_load_funcs = cls.load_save_load_funcs(folder)
+
+        # load knowledge
+        # if no gene_index is specified, load the fully trained model
+        if gene_index is None:
+            knowledge = cls.load_state(folder, "knowledge.json", save_load_funcs)
+            gene_index = -1
+        # if gene_index is an int, we load the knowledge of that index
+        elif isinstance(gene_index, int):
+            knowledge = cls.load_state(
+                f"{folder}/train_log", f"{gene_index}.json", save_load_funcs
+            )
+        # if step is a string, find the index of the gene with the matching name, load knowledge of that index
+        elif isinstance(gene_index, str):
+            # get gene_index from gene name
+            for i, gene in enumerate(dna):
+                if gene["name"] == gene_index:
+                    gene_index = i
+                    break
+            knowledge = cls.load_state(
+                f"{folder}/train_log", f"{gene_index}.json", save_load_funcs
+            )
+        else:
+            raise ValueError(f'gene_index must be None, int, or str. Got {gene_index} of type {type(gene_index)}')
+
+        # We don't save dna functions, just their references. We need to load them
+        # We assume that whoever is loading the organism has the same functions as when they created the dna
+        inference_outputs = []
+        for gene in dna:
+            for mode in ["train", "inference"]:
+                if gene[mode]:
+                    func_ref = gene[mode]["func"]
+                    parent = func_ref.split(".")[0]
+                    # if the object was output by a previous step, assume that we will get it from state while running
+                    if parent in knowledge or parent in inference_outputs:
+                        continue
+                    gene[mode]["func"] = load_function_from_reference(func_ref)
+
+        # Load parameters
+        with open(os.path.join(folder, "parameters.json"), "r") as f:
+            parameters = json.load(f)
+
+        return cls(
+            name,
+            dna,
+            parameters,
+            knowledge,
+            save_load_funcs,
+            version=version,
+            gene_index=gene_index + 1,  # loaded knowdledge from gene_index, resume training at NEXT gene_index
+        )
+
+    @classmethod
+    def load_save_load_funcs(cls, folder):
         # Load custom saving and loading logic
         save_load_funcs = {}
         path = os.path.join(folder, "save_load_funcs.json")
@@ -297,9 +373,12 @@ class Organism:
                 for sl in ["save", "load"]:
                     with open(os.path.join(folder, save_load[sl]), "rb") as pkl_file:
                         save_load_funcs[key][sl] = pickle.load(pkl_file)
+        return save_load_funcs
 
+    @classmethod
+    def load_state(cls, folder, file_name, save_load_funcs):
         # Load knowledge
-        with open(os.path.join(folder, "knowledge.json"), "r") as f:
+        with open(os.path.join(folder, file_name), "r") as f:
             knowledge = json.load(f)
         # Some knowledge is stored in other files. Load them
         for key, value in knowledge.items():
@@ -313,27 +392,7 @@ class Organism:
                     knowledge[key] = pd.read_csv(
                         os.path.join(folder, value), index_col=0
                     )
-
-        # Load DNA
-        with open(os.path.join(folder, "dna.json"), "r") as f:
-            dna = json.load(f)
-
-        # We don't save actual functions, just their references. We need to load them
-        inference_outputs = []
-        for gene in dna:
-            # Train is not needed right now. Maybe in the future we will want to train more after saving and loading.
-            if gene["inference"]:
-                func_ref = gene["inference"]["func"]
-                parent = func_ref.split(".")[0]
-                if parent in knowledge or parent in inference_outputs:
-                    continue
-                gene["inference"]["func"] = load_function_from_reference(func_ref)
-
-        # Load parameters
-        with open(os.path.join(folder, "parameters.json"), "r") as f:
-            parameters = json.load(f)
-
-        return cls(name, dna, parameters, knowledge, save_load_funcs, folder)
+        return knowledge
 
     def reset(self):
         self.score = 0
