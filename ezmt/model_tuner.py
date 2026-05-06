@@ -29,7 +29,8 @@ class ModelTuner:
             y_col: str = None,
             generations: int = 1,
             pop_size: int = 20,
-            goal: str = 'min'
+            goal: str = 'min',
+            directory: str = "organisms",
     ):
         # Generations can be used for batches of data and not for evolution
         self.model_space = validate_config(model_space, hyperparam_space)
@@ -41,6 +42,7 @@ class ModelTuner:
         self.population_size = pop_size
         self.population = []
         self.goal = goal
+        self.directory = directory
         self.metrics = []
 
     def populate_init(self, run_name):
@@ -48,7 +50,7 @@ class ModelTuner:
         for _ in range(self.population_size):
             dna = choose_dna(self.model_space)
             hyperparams = choose_hyperparams(self.hyperparam_space)
-            organism = Organism(run_name, dna, hyperparams, save_load_funcs=self.save_load_funcs)
+            organism = Organism(run_name, dna, hyperparams, save_load_funcs=self.save_load_funcs, directory=self.directory)
             self.population.append(organism)
 
     def select_and_reproduce(

@@ -198,6 +198,7 @@ class Organism:
             deepcopy(self.dna),
             deepcopy(self.parameters),
             save_load_funcs=self.save_load_funcs,
+            directory=self.directory,
         )
 
     async def run(
