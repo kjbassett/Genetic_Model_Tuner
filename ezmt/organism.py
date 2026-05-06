@@ -10,6 +10,7 @@ import pandas as pd
 import pickle
 
 from ezmt.the_pickler import ThePickler, check_state_picklability
+from ezmt.common_funcs import resolve_log_states
 
 
 class Organism:
@@ -23,8 +24,10 @@ class Organism:
             save_load_funcs=None,
             version=None,
             gene_index=0,
+            directory="organisms",
     ):
         self.name = name
+        self.directory = directory
         # self.dna represents the sequence of functions
         self.dna = dna if dna else []
         # self.parameters holds the arg values for the functions in self.dna
@@ -58,7 +61,7 @@ class Organism:
             name = self.name
         if version is None:
             version = f"{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
-        self.folder = f"organisms/{name}/{version}"
+        self.folder = f"{self.directory}/{name}/{version}"
         return self.folder
 
     def add_gene(self, gene):
@@ -205,9 +208,10 @@ class Organism:
     ):
         # TODO does this belong in the Organism class or the ModelTuner class?
         state = {**self.knowledge, "x_new": data}
+        states_to_log = resolve_log_states(log_states)
         while self.gene_index < len(self.dna):
             state = await self.run_gene(
-                mode, self.gene_index, state, log_state=log_states
+                mode, self.gene_index, state, log_state=states_to_log is None or self.gene_index in states_to_log
             )
             self.gene_index += 1
         if result_name in state:

@@ -10,6 +10,7 @@ import time
 from copy import deepcopy
 
 from ezmt.organism import Organism, dna2str
+from ezmt.common_funcs import resolve_log_states
 from ezmt.config_validation import validate_config
 from ezmt.the_pickler import check_state_picklability
 
@@ -88,6 +89,7 @@ class ModelTuner:
     async def experience_population(self, state, pool, log_states=False):
         # Just as we experience the universe, the universe experiences us
         # for each decision point, process only unique chains of decisions + args from first decision point to current
+        states_to_log = resolve_log_states(log_states)
 
         unique_organisms = {'': state}
 
@@ -120,11 +122,11 @@ class ModelTuner:
                 if is_gpu:
                     async with self.gpu_semaphore:
                         new_state = asyncio.create_task(
-                            organism.run_gene('train', i, state, pool, log_state=log_states)
+                            organism.run_gene('train', i, state, pool, log_state=states_to_log is None or i in states_to_log)
                         )
                 else:
                     new_state = asyncio.create_task(
-                        organism.run_gene('train', i, state, pool, log_state=log_states)
+                        organism.run_gene('train', i, state, pool, log_state=states_to_log is None or i in states_to_log)
                     )
                 # TODO organisms with current step param run_in_parent_process=True should be sorted to the end of the organisms
                 #  so that other async/parallel jobs can start first.
