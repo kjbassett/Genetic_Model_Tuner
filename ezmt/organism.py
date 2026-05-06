@@ -302,10 +302,10 @@ class Organism:
         return dna_copy, knowledge_to_save
 
     @classmethod
-    def load(cls, name, version: str = "latest", gene_index=None):
+    def load(cls, name, version: str = "latest", gene_index=None, directory="organisms"):
         if version == "latest":
-            version = os.listdir(f"organisms/{name}/")[-1]
-        folder = f"organisms/{name}/{version}"
+            version = os.listdir(f"{directory}/{name}/")[-1]
+        folder = f"{directory}/{name}/{version}"
 
         # Load DNA
         with open(os.path.join(folder, "dna.json"), "r") as f:
@@ -362,6 +362,7 @@ class Organism:
             save_load_funcs,
             version=version,
             gene_index=gene_index + 1,  # loaded knowdledge from gene_index, resume training at NEXT gene_index
+            directory=directory,
         )
 
     @classmethod
