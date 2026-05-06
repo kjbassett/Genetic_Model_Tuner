@@ -2,6 +2,7 @@ import asyncio
 import numpy as np
 import random
 from concurrent.futures import ProcessPoolExecutor
+from typing import Iterable, Union
 
 import pandas as pd
 from sklearn.model_selection import StratifiedKFold
@@ -140,6 +141,7 @@ class ModelTuner:
 
         # Each organism "remembers" what it has processed
         # knowledge is saved when the organism is saved, and it is loaded later to use during inference
+        # TODO Shouldn't this just be done inside organism.run_gene?
         for organism in self.population:
             organism.knowledge = unique_organisms[dna2str(organism.dna)]
 
@@ -194,7 +196,7 @@ class ModelTuner:
             else:
                 model.fitness = (model.score - worst) / (best - worst)
 
-    async def run(self, run_name, log_states=False):
+    async def run(self, run_name, log_states: Union[bool, int, Iterable[int]] = False):
         pp.pprint(self.model_space)
         with ProcessPoolExecutor(8) as pool:
             for gen in range(self.generations):

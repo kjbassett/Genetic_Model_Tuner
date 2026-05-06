@@ -6,6 +6,7 @@ import os
 import json
 import datetime
 import importlib
+from typing import Iterable, Union
 import pandas as pd
 import pickle
 
@@ -203,7 +204,7 @@ class Organism:
             self,
             mode: str = "inference",
             data=None,
-            log_states=False,
+            log_states: Union[bool, int, Iterable[int]] = False,
             result_name="y_pred"
     ):
         # TODO does this belong in the Organism class or the ModelTuner class?
