@@ -378,6 +378,8 @@ class Organism:
             # Some knowledge is stored in pickle files. Load them
             for key, save_load in save_load_funcs.items():
                 for sl in ["save", "load"]:
+                    if sl not in save_load:
+                        continue
                     with open(os.path.join(folder, save_load[sl]), "rb") as pkl_file:
                         save_load_funcs[key][sl] = pickle.load(pkl_file)
         return save_load_funcs
@@ -390,7 +392,7 @@ class Organism:
         # Some knowledge is stored in other files. Load them
         for key, value in knowledge.items():
             if isinstance(value, str):
-                if key in save_load_funcs:
+                if key in save_load_funcs and "load" in save_load_funcs[key]:
                     knowledge[key] = save_load_funcs[key]["load"](folder, value)
                 elif value.endswith(".pkl"):
                     with open(os.path.join(folder, value), "rb") as pkl_file:
