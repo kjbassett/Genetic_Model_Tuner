@@ -206,7 +206,8 @@ class Organism:
             mode: str = "inference",
             data=None,
             log_states: Union[bool, int, Iterable[int]] = False,
-            result_name="y_pred"
+            result_name="y_pred",
+            update_knowledge: bool = False,
     ):
         # TODO does this belong in the Organism class or the ModelTuner class?
         state = {**self.knowledge, "x_new": data}
@@ -216,6 +217,8 @@ class Organism:
                 mode, self.gene_index, state, log_state=states_to_log is None or self.gene_index in states_to_log
             )
             self.gene_index += 1
+        if update_knowledge:
+            self.knowledge = {k: v for k, v in state.items() if k != "x_new"}
         if result_name in state:
             return state[result_name]
         else:
