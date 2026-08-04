@@ -1,6 +1,9 @@
+import logging
 from copy import deepcopy
 
 from ezmt.hyperparameters import Hyperparameter
+
+_log = logging.getLogger("ezmt.config")
 
 
 def validate_config(model_space, hyperparams):
@@ -174,9 +177,9 @@ def validate_args(args_list, available_args):
         # If we're validating inputs, ensure they are valid previous outputs or predefined inputs
         if isinstance(arg, str):
             if arg not in available_args:
-                print(
-                    f"Warning: arg '{arg}' is not an available arg. "
-                    f"You can ignore this if the provided function takes '{arg}' as a string argument."
+                _log.warning(
+                    "arg '%s' is not an available arg "
+                    "(ignore if the function takes it as a literal string)", arg
                 )
     return args_list
 
@@ -187,9 +190,9 @@ def validate_kwargs(kwargs_dict, available_args):
 
     for key, value in kwargs_dict.items():
         if isinstance(value, str) and value not in available_args:
-            print(
-                f"Warning: kwarg referencing '{value}' is not an available argument. "
-                f"You can ignore this if the provided function takes '{value}' as a string argument."
+            _log.warning(
+                "kwarg '%s' references '%s' which is not an available argument "
+                "(ignore if the function takes it as a literal string)", key, value
             )
 
     return kwargs_dict

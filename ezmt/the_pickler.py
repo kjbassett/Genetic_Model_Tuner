@@ -1,10 +1,13 @@
 import json
+import logging
 import os
 import time
 
 import pandas as pd
 
 from ezmt.common_funcs import is_picklable
+
+_log = logging.getLogger("ezmt.pickler")
 
 
 class ThePickler(json.JSONEncoder):
@@ -35,7 +38,7 @@ class ThePickler(json.JSONEncoder):
                     f.write(pickled_data)
                 return file_name
             except Exception as e:
-                print(f"Error pickling object: {str(e)}")
+                _log.error("Error pickling object: %s", e)
                 return str(obj)
 
 

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import numpy as np
 import random
 from concurrent.futures import ProcessPoolExecutor
@@ -6,7 +7,6 @@ from typing import Iterable, Union
 
 import pandas as pd
 from sklearn.model_selection import StratifiedKFold
-import pprint
 import time
 from copy import deepcopy
 
@@ -15,7 +15,7 @@ from ezmt.common_funcs import resolve_log_states
 from ezmt.config_validation import validate_config
 from ezmt.the_pickler import check_state_picklability
 
-pp = pprint.PrettyPrinter(indent=4)
+_log = logging.getLogger("ezmt.tuner")
 
 
 class ModelTuner:
@@ -97,7 +97,7 @@ class ModelTuner:
         unique_organisms = {'': state}
 
         for i in range(len(self.model_space)):
-            print(f'Processing gene {i + 1}/{len(self.model_space)} for each organism')
+            _log.info("Processing gene %d/%d for each organism", i + 1, len(self.model_space))
             prev_unique = unique_organisms
             unique_organisms = dict()
 
@@ -107,7 +107,7 @@ class ModelTuner:
                     key=lambda org: (False if org.dna[i]['train'] is None else True) and org.dna[i]['train']['gpu']
             ):
                 current_dna = dna2str(organism.dna[:i + 1])
-                print(f'Processing organism branch {current_dna}')
+                _log.debug("Processing organism branch %s", current_dna)
                 # check if identical series of decisions up to this stage has already started calculating
                 if current_dna in unique_organisms.keys():
                     continue
@@ -199,17 +199,16 @@ class ModelTuner:
                 model.fitness = (model.score - worst) / (best - worst)
 
     async def run(self, run_name, log_states: Union[bool, int, Iterable[int]] = False):
-        pp.pprint(self.model_space)
+        _log.debug("model_space: %s", self.model_space)
         with ProcessPoolExecutor(8) as pool:
             for gen in range(self.generations):
                 if gen == 0:
                     self.populate_init(run_name)
                 else:
                     self.select_and_reproduce()
-                print(f'Starting generation {gen + 1}/{self.generations}')
-                print('POPULATION:')
+                _log.info("Starting generation %d/%d", gen + 1, self.generations)
                 for organism in self.population:
-                    print(organism)
+                    _log.debug("Population member: %s", organism)
                 t = time.time()
                 # Get next fold of data for next generation
                 x_train, x_test, y_train, y_test = next(self.data_fold_generator)
@@ -220,11 +219,9 @@ class ModelTuner:
                 )
 
                 self.score_fitness(results)
-                print('Run Time: ' + str(time.time() - t))
-                pp.pprint(self.metrics[-1])
-                print('--------------------------------')
+                _log.info("Generation %d runtime: %.1fs | metrics: %s", gen + 1, time.time() - t, self.metrics[-1])
                 for model in self.population:
-                    pp.pprint(model.dna)
+                    _log.debug("Organism DNA: %s", model.dna)
 
             # score is converted into fitness, which always follows highest-is-best
             return max(self.population)
