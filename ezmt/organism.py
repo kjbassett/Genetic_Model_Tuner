@@ -289,6 +289,12 @@ class Organism:
                 for inp in gene["inference"]["args"]:
                     if inp not in available_inputs and inp in self.knowledge:
                         knowledge_to_save[inp] = self.knowledge[inp]
+                # Save kwargs that come from training (kwargs are resolved from state/
+                # knowledge identically to args at run time in get_gene_data, so they
+                # must be scanned identically here too)
+                for inp in gene["inference"].get("kwargs", {}).values():
+                    if isinstance(inp, str) and inp not in available_inputs and inp in self.knowledge:
+                        knowledge_to_save[inp] = self.knowledge[inp]
                 # Don't save the function itself. Save a reference.
                 inf_func = gene["inference"]["func"]
                 if isinstance(inf_func, str):
