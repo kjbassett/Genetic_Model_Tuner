@@ -37,7 +37,7 @@ class Organism:
         self.knowledge = knowledge if knowledge else {}
         # self.save_load_funcs holds custom saving and loading logic for state/knowledge objects
         self.save_load_funcs = save_load_funcs if save_load_funcs else {}
-        self.folder = self.new_version(version)
+        self.folder = self.new_version(version=version)
         self.score = 0
         self.fitness = 0
         self.gene_index = gene_index
