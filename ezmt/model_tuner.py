@@ -89,6 +89,23 @@ class ModelTuner:
             new_pop.append(child)
         self.population = new_pop
 
+    async def _hold_gpu_semaphore(self, coro):
+        """Await ``coro`` while holding the GPU semaphore.
+
+        The semaphore has to be acquired inside the coroutine that does the work.
+        Acquiring it around asyncio.create_task only covers scheduling: the task
+        is queued and returns immediately, so the semaphore is released before
+        the gene runs and serialises nothing.
+
+        Args:
+            coro: The gene coroutine to run under the semaphore.
+
+        Returns:
+            Whatever ``coro`` returns.
+        """
+        async with self.gpu_semaphore:
+            return await coro
+
     async def experience_population(self, state, pool, log_states=False):
         # Just as we experience the universe, the universe experiences us
         # for each decision point, process only unique chains of decisions + args from first decision point to current
@@ -121,16 +138,12 @@ class ModelTuner:
                 except KeyError:
                     raise KeyError(f'No state found for previous dna: {prev_dna}')
 
-                is_gpu = organism.dna[i]['train']['gpu']
-                if is_gpu:
-                    async with self.gpu_semaphore:
-                        new_state = asyncio.create_task(
-                            organism.run_gene('train', i, state, pool, log_state=states_to_log is None or i in states_to_log)
-                        )
-                else:
-                    new_state = asyncio.create_task(
-                        organism.run_gene('train', i, state, pool, log_state=states_to_log is None or i in states_to_log)
-                    )
+                gene_run = organism.run_gene(
+                    'train', i, state, pool, log_state=states_to_log is None or i in states_to_log
+                )
+                if organism.dna[i]['train']['gpu']:
+                    gene_run = self._hold_gpu_semaphore(gene_run)
+                new_state = asyncio.create_task(gene_run)
                 # TODO organisms with current step param run_in_parent_process=True should be sorted to the end of the organisms
                 #  so that other async/parallel jobs can start first.
                 #  Also it should be assigned False by default for train branch in config validation
