@@ -495,13 +495,57 @@ def create_folder(folder):
         os.makedirs(folder)
 
 
-def dna2str(dna):
+def _resolve_reference(value, parameters):
+    """Substitute a hyperparameter reference for its sampled value.
+
+    Genes hold hyperparameters by name, not by value -- get_gene_data looks each
+    one up in the organism's parameters at run time. Rendering the name would
+    make two organisms with different hyperparameters produce the same string.
+
+    Args:
+        value: An arg or kwarg value from a gene, possibly a parameter name.
+        parameters: The organism's sampled hyperparameters, or None to render
+            references as-is.
+
+    Returns:
+        The sampled value when ``value`` names a hyperparameter, else ``value``.
+    """
+    if parameters and isinstance(value, str) and value in parameters:
+        return parameters[value]
+    return value
+
+
+def dna2str(dna, parameters=None):
+    """Render DNA as a string, used as the key for ezmt's per-gene result cache.
+
+    Two organisms share a cached result only when their strings match up to that
+    gene, so the string has to capture everything that makes their computations
+    differ. That includes the hyperparameters each gene consumes: without
+    ``parameters`` the genes render their parameter *names*, which are identical
+    across the population, so every organism collapses onto one cache entry and
+    only the first one ever runs.
+
+    Passing ``parameters`` keeps the sharing that matters -- genes consuming no
+    hyperparameters, or only ones pinned to a single value, still render
+    identically and so still share a prefix -- while genes whose hyperparameters
+    actually differ now fork.
+
+    Args:
+        dna: The organism's DNA, or a prefix slice of it.
+        parameters: The organism's sampled hyperparameters. Omit only when the
+            string is for display rather than for cache identity.
+
+    Returns:
+        The rendered DNA string.
+    """
     dna_str = ""
     for gene in dna:
         dna_str += gene["name"] + "("
         if gene["train"]:
-            dna_str += ", ".join([str(a) for a in gene["train"]["args"]])
+            dna_str += ", ".join(
+                [str(_resolve_reference(a, parameters)) for a in gene["train"]["args"]]
+            )
             for key, value in gene["train"]["kwargs"].items():
-                dna_str += f", {key}={value}"
+                dna_str += f", {key}={_resolve_reference(value, parameters)}"
         dna_str += ")"
     return dna_str

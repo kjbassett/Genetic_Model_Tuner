@@ -106,13 +106,13 @@ class ModelTuner:
                     self.population,
                     key=lambda org: (False if org.dna[i]['train'] is None else True) and org.dna[i]['train']['gpu']
             ):
-                current_dna = dna2str(organism.dna[:i + 1])
+                current_dna = dna2str(organism.dna[:i + 1], organism.parameters)
                 _log.debug("Processing organism branch %s", current_dna)
                 # check if identical series of decisions up to this stage has already started calculating
                 if current_dna in unique_organisms.keys():
                     continue
 
-                prev_dna = dna2str(organism.dna[:i])
+                prev_dna = dna2str(organism.dna[:i], organism.parameters)
                 # state is a dict of that hold all the saved outputs from previous steps for later use
                 try:
                     # Must wrap in dict to make a shallow copy
@@ -145,7 +145,9 @@ class ModelTuner:
         # knowledge is saved when the organism is saved, and it is loaded later to use during inference
         # TODO Shouldn't this just be done inside organism.run_gene?
         for organism in self.population:
-            organism.knowledge = unique_organisms[dna2str(organism.dna)]
+            organism.knowledge = unique_organisms[
+                dna2str(organism.dna, organism.parameters)
+            ]
 
         return unique_organisms
 
@@ -190,7 +192,7 @@ class ModelTuner:
                              'worst_dna': worst_dna})
 
         for model in self.population:
-            dna = dna2str(model.dna)
+            dna = dna2str(model.dna, model.parameters)
             model.score = unique_organisms[dna]['score']
             scores.append(model.score)
             if len(unique_organisms) == 1:
