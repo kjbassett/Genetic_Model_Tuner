@@ -13,6 +13,60 @@ import pickle
 from ezmt.the_pickler import ThePickler, check_state_picklability
 from ezmt.common_funcs import resolve_log_states
 
+# How run_gene will execute a gene.
+DISPATCH_AWAIT = "await"  # coroutine, awaited in the calling process
+DISPATCH_PARENT = "parent"  # called inline in the calling process
+DISPATCH_THREAD = "thread"  # worker thread, still the calling process
+DISPATCH_SUBPROCESS = "subprocess"  # ProcessPoolExecutor; arguments are pickled
+
+# The only dispatch that leaves the calling process, and so the only one that
+# copies its arguments instead of sharing them by reference.
+_COPYING_DISPATCHES = frozenset({DISPATCH_SUBPROCESS})
+
+
+def resolve_dispatch(func, run_in_parent_process=False, has_pool=True):
+    """Return how Organism.run_gene will execute ``func``.
+
+    run_gene owns the decision, but callers need to predict it without running
+    anything -- chiefly to reason about memory, since a gene sent to the process
+    pool has its arguments pickled and therefore duplicated per caller. Keeping
+    the rule here means run_gene and those callers cannot drift apart.
+
+    Args:
+        func: The resolved gene function. Must be the callable, not a string
+            reference, since coroutine detection depends on the real object.
+        run_in_parent_process: The gene's run_in_parent_process flag.
+        has_pool: Whether a ProcessPoolExecutor was supplied to run_gene.
+
+    Returns:
+        One of DISPATCH_AWAIT, DISPATCH_PARENT, DISPATCH_THREAD or
+        DISPATCH_SUBPROCESS.
+    """
+    if inspect.iscoroutinefunction(func):
+        return DISPATCH_AWAIT
+    if run_in_parent_process:
+        return DISPATCH_PARENT
+    if has_pool:
+        return DISPATCH_SUBPROCESS
+    return DISPATCH_THREAD
+
+
+def copies_arguments(func, run_in_parent_process=False, has_pool=True):
+    """Return whether running ``func`` as a gene would copy its arguments.
+
+    Args:
+        func: The resolved gene function.
+        run_in_parent_process: The gene's run_in_parent_process flag.
+        has_pool: Whether a ProcessPoolExecutor was supplied to run_gene.
+
+    Returns:
+        True when the gene crosses a process boundary and its arguments are
+        pickled; False when it shares them by reference.
+    """
+    return (
+        resolve_dispatch(func, run_in_parent_process, has_pool) in _COPYING_DISPATCHES
+    )
+
 
 class Organism:
 
@@ -72,7 +126,7 @@ class Organism:
         if not self.dna[gene_index][mode]:
             return state
 
-        func, args, kwargs, output_names, is_async, run_in_parent_process = (
+        func, args, kwargs, output_names, run_in_parent_process = (
             self.get_gene_data(mode, gene_index, state)
         )
 
@@ -82,12 +136,13 @@ class Organism:
         #  so that other async/parallel jobs can start first.
         #  Also it should be assigned False by default for train branch in config validation
         #  Model tuner should create a task, not await run_gene
-        if is_async:
+        dispatch = resolve_dispatch(func, run_in_parent_process, has_pool=bool(pool))
+        if dispatch == DISPATCH_AWAIT:
             # Async CPU
             output = await func(*args, **kwargs)
-        elif run_in_parent_process:
+        elif dispatch == DISPATCH_PARENT:
             output = func(*args, **kwargs)
-        elif pool:
+        elif dispatch == DISPATCH_SUBPROCESS:
             check_state_picklability(state)
             loop = asyncio.get_running_loop()
             output = await loop.run_in_executor(pool, partial(func, *args, **kwargs))
@@ -112,7 +167,6 @@ class Organism:
                 None,
                 None,
                 None,
-                False,
                 False,
             )  # gene is inactive in this mode, return current state
         func = gene["func"]
@@ -159,12 +213,12 @@ class Organism:
 
         output_names = gene["outputs"]  # output names
 
-        is_async = inspect.iscoroutinefunction(func)
-
+        # Coroutine detection lives in resolve_dispatch so run_gene and any
+        # caller predicting its behaviour read the same rule.
         run_in_parent_process = self.dna[gene_index][mode].get(
             "run_in_parent_process", False
         )
-        return func, args, kwargs, output_names, is_async, run_in_parent_process
+        return func, args, kwargs, output_names, run_in_parent_process
 
     def get_func_from_string(self, func, state):
         f = func.split(".")
