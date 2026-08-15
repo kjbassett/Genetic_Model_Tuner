@@ -10,7 +10,7 @@ from typing import Iterable, Union
 import pandas as pd
 import pickle
 
-from ezmt.the_pickler import ThePickler, check_state_picklability
+from ezmt.the_pickler import ThePickler, check_state_picklability, load_frame
 from ezmt.common_funcs import resolve_log_states
 
 # How run_gene will execute a gene.
@@ -460,10 +460,10 @@ class Organism:
                 elif value.endswith(".pkl"):
                     with open(os.path.join(folder, value), "rb") as pkl_file:
                         knowledge[key] = pickle.load(pkl_file)
-                elif value.endswith(".csv"):
-                    knowledge[key] = pd.read_csv(
-                        os.path.join(folder, value), index_col=0
-                    )
+                elif value.endswith((".parquet", ".csv")):
+                    # .csv still handled so organisms saved before the switch
+                    # to parquet keep loading.
+                    knowledge[key] = load_frame(os.path.join(folder, value))
         return knowledge
 
     def reset(self):
