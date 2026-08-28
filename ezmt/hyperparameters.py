@@ -65,7 +65,15 @@ class DiscreteNonOrdinal(Hyperparameter):
         return random.choice(self.options)
 
     def mutate(self, current_value):
-        new = current_value
-        while new == current_value:
-            new = self.sample()
-        return new
+        """Return a different option, or the current value when there is no other.
+
+        This used to resample until it saw something new, which cannot terminate
+        when no other option exists -- and pinning a hyperparameter to one option
+        is a normal way to hold an axis of the search fixed. Mutation hung the run
+        with no error. Drawing from the alternatives directly keeps the same
+        uniform distribution and always terminates.
+        """
+        alternatives = [o for o in self.options if o != current_value]
+        if not alternatives:
+            return current_value
+        return random.choice(alternatives)
