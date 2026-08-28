@@ -1,8 +1,12 @@
 import asyncio
+import hashlib
 import logging
 import numpy as np
+import os
 import random
+import shutil
 from concurrent.futures import ProcessPoolExecutor
+from contextlib import ExitStack
 from typing import Iterable, Union
 
 import pandas as pd
@@ -16,6 +20,19 @@ from ezmt.config_validation import validate_config
 from ezmt.the_pickler import check_state_picklability
 
 _log = logging.getLogger("ezmt.tuner")
+
+# A checkpoint folder holds the state file, the DNA prefix it belongs to (for
+# reading the tree by hand), and a marker written last. Resuming requires the
+# marker, so a checkpoint interrupted part-way through writing is ignored rather
+# than loaded half-formed.
+CHECKPOINT_STATE_FILE = "state.json"
+CHECKPOINT_PREFIX_FILE = "prefix.txt"
+CHECKPOINT_MARKER_FILE = "complete"
+
+# Folder names are a digest of the DNA prefix: prefixes run to hundreds of
+# characters and contain '(', ',' and '=', so they are neither short enough nor
+# legal as path components.
+_DIGEST_LENGTH = 16
 
 
 class ModelTuner:
@@ -31,18 +48,47 @@ class ModelTuner:
             pop_size: int = 20,
             goal: str = 'min',
             directory: str = "organisms",
+            sequential: bool = False,
+            temp_directory: str = None,
+            cleanup_temp: bool = False,
+            save_organisms: str = "best",
     ):
+        """
+        Args:
+            sequential: Run organisms one at a time, spilling the DNA prefixes
+                they share to disk instead of holding every branch in memory.
+                Needed when the branches are too large to coexist.
+            temp_directory: Where spilled prefixes and in-progress organisms
+                live. Defaults to a hidden folder beside the organisms.
+            cleanup_temp: Delete that tree once the run finishes.
+            save_organisms: "best" saves only the winner; "all" additionally
+                keeps every organism's folder for comparison.
+        """
+        if save_organisms not in ("best", "all"):
+            raise ValueError(
+                f'save_organisms must be "best" or "all". Got {save_organisms!r}'
+            )
         # Generations can be used for batches of data and not for evolution
         self.model_space = validate_config(model_space, hyperparam_space)
         self.hyperparam_space = hyperparam_space
         self.save_load_funcs = save_load_funcs if save_load_funcs else {}
         self.gpu_semaphore = asyncio.Semaphore(1)  # Used to ensure only 1 process is accessing the GPU at a time
         self.data_fold_generator = generate_stratified_folds(data, y_col)
+        # Whether every generation gets the same fold. When data is None the
+        # generator yields the same empty fold forever, so a prefix cached in one
+        # generation is still valid in the next; when it is not, each generation
+        # trains on different rows and cached prefixes must not be shared.
+        self.folds_are_static = data is None
         self.generations = generations
         self.population_size = pop_size
         self.population = []
         self.goal = goal
         self.directory = directory
+        self.sequential = sequential
+        self.temp_directory = temp_directory or f"{directory}/.ezmt_tmp"
+        self.cleanup_temp = cleanup_temp
+        self.save_organisms = save_organisms
+        self.fold_key = "0"
         self.metrics = []
 
     def populate_init(self, run_name):
@@ -108,9 +154,135 @@ class ModelTuner:
 
     async def experience_population(self, state, pool, log_states=False):
         # Just as we experience the universe, the universe experiences us
-        # for each decision point, process only unique chains of decisions + args from first decision point to current
         states_to_log = resolve_log_states(log_states)
+        if self.sequential:
+            return await self._experience_sequentially(state, states_to_log)
+        return await self._experience_concurrently(state, pool, states_to_log)
 
+    # ------------------------------------------------------------------
+    # Sequential execution
+    # ------------------------------------------------------------------
+
+    async def _experience_sequentially(self, base_state, states_to_log):
+        """Run organisms one at a time, resuming from shared prefixes on disk.
+
+        The concurrent path is gene-major: it advances every DNA branch through
+        one gene before moving on, so every branch's state is live at once. Here
+        one organism runs to completion before the next starts, and the prefixes
+        the population shares are written to disk at the point it forks. Peak
+        memory is one organism instead of one per branch.
+
+        Args:
+            base_state: The starting state for an organism with no cached prefix.
+            states_to_log: Gene indices to log state after, or None for all.
+
+        Returns:
+            {dna string: saved state}, where each saved state holds file paths
+            and scalars rather than the objects themselves.
+        """
+        checkpoints = find_checkpoint_prefixes(self.population)
+        _log.info(
+            "Sequential run: %d organism(s), %d shared checkpoint(s)",
+            len(self.population), len(checkpoints),
+        )
+        results = {}
+        folders = {}
+        total = len(self.population)
+        for n, organism in enumerate(self.population, start=1):
+            dna = dna2str(organism.dna, organism.parameters)
+            if dna in results:
+                _log.info("Organism %d/%d: identical genome already run", n, total)
+                # Point it at the twin that did run. Leaving it on the folder
+                # populate_init handed out is worse than useless: every organism
+                # gets the same timestamped name, so it aliases whichever
+                # organism is published there at the end of the run.
+                organism.folder = folders[dna]
+                continue
+            organism.folder = f"{self.temp_directory}/organisms/{n - 1}"
+            folders[dna] = organism.folder
+            state, first_gene = self.restore_from_checkpoint(organism, base_state)
+            _log.info(
+                "Organism %d/%d: starting at gene %d/%d",
+                n, total, first_gene + 1, len(self.model_space),
+            )
+            for i in range(first_gene, len(self.model_space)):
+                state = await organism.run_gene(
+                    'train', i, state,
+                    log_state=states_to_log is None or i in states_to_log,
+                )
+                self.save_fork_checkpoint(organism, i, state, checkpoints)
+            organism.knowledge = state
+            results[dna] = organism.save()
+            # The saved dict names every output as a file, so dropping the live
+            # state here is what actually frees the model and its datasets.
+            organism.knowledge = {}
+        return results
+
+    def checkpoint_folder(self, prefix):
+        """Return the folder a DNA prefix's cached state lives in."""
+        digest = hashlib.sha1(prefix.encode("utf-8")).hexdigest()[:_DIGEST_LENGTH]
+        return f"{self.temp_directory}/fold_{self.fold_key}/{digest}"
+
+    def restore_from_checkpoint(self, organism, base_state):
+        """Load the deepest cached prefix this organism can resume from.
+
+        Deliberately re-reads from disk rather than handing out a state another
+        organism is already using. Without a process pool nothing pickles the
+        state between genes, so two organisms sharing one loaded object would see
+        each other's in-place edits.
+
+        Args:
+            organism: The organism about to run.
+            base_state: The state to start from when nothing is cached.
+
+        Returns:
+            (state, first_gene) -- the state to run from and the gene to run next.
+        """
+        for i in range(len(organism.dna) - 1, -1, -1):
+            prefix = dna2str(organism.dna[:i + 1], organism.parameters)
+            folder = self.checkpoint_folder(prefix)
+            if not os.path.exists(os.path.join(folder, CHECKPOINT_MARKER_FILE)):
+                continue
+            _log.info("Resuming from cached prefix after gene %d", i + 1)
+            state = Organism.load_state(
+                folder, CHECKPOINT_STATE_FILE, organism.save_load_funcs
+            )
+            return state, i + 1
+        return dict(base_state), 0
+
+    def save_fork_checkpoint(self, organism, gene_index, state, checkpoints):
+        """Spill the state to disk when the population forks after this gene.
+
+        Args:
+            organism: The organism that just ran the gene.
+            gene_index: Index of the gene that just ran.
+            state: The state it produced.
+            checkpoints: Prefixes worth caching, from find_checkpoint_prefixes.
+        """
+        prefix = dna2str(organism.dna[:gene_index + 1], organism.parameters)
+        if prefix not in checkpoints:
+            return
+        folder = self.checkpoint_folder(prefix)
+        marker = os.path.join(folder, CHECKPOINT_MARKER_FILE)
+        if os.path.exists(marker):
+            return  # an earlier organism already cached this prefix
+        organism.save_state(folder, CHECKPOINT_STATE_FILE, state)
+        with open(os.path.join(folder, CHECKPOINT_PREFIX_FILE), "w") as f:
+            f.write(prefix)
+        # Written last, so an interrupted save leaves a folder that is skipped
+        # rather than one that loads as a truncated state.
+        open(marker, "w").close()
+        _log.info(
+            "Cached prefix after gene %d for %d organism(s)",
+            gene_index + 1, checkpoints[prefix],
+        )
+
+    # ------------------------------------------------------------------
+    # Concurrent execution
+    # ------------------------------------------------------------------
+
+    async def _experience_concurrently(self, state, pool, states_to_log):
+        # for each decision point, process only unique chains of decisions + args from first decision point to current
         unique_organisms = {'': state}
 
         for i in range(len(self.model_space)):
@@ -215,7 +387,12 @@ class ModelTuner:
 
     async def run(self, run_name, log_states: Union[bool, int, Iterable[int]] = False):
         _log.debug("model_space: %s", self.model_space)
-        with ProcessPoolExecutor(8) as pool:
+        with ExitStack() as stack:
+            # Nothing runs concurrently in sequential mode, so a pool would only
+            # add worker processes and force every sync gene to pickle the whole
+            # state across a process boundary. Without one those genes run in a
+            # thread and share the state by reference.
+            pool = None if self.sequential else stack.enter_context(ProcessPoolExecutor(8))
             for gen in range(self.generations):
                 if gen == 0:
                     self.populate_init(run_name)
@@ -227,6 +404,9 @@ class ModelTuner:
                 t = time.time()
                 # Get next fold of data for next generation
                 x_train, x_test, y_train, y_test = next(self.data_fold_generator)
+                # Cached prefixes are only interchangeable between generations
+                # that train on the same rows.
+                self.fold_key = "static" if self.folds_are_static else str(gen)
                 results = await self.experience_population(
                     {'x_train': x_train, 'x_test': x_test, 'y_train': y_train, 'y_test': y_test},
                     pool,
@@ -239,7 +419,93 @@ class ModelTuner:
                     _log.debug("Organism DNA: %s", model.dna)
 
             # score is converted into fitness, which always follows highest-is-best
-            return max(self.population)
+            best = max(self.population)
+            self.publish_best_organism(best)
+            if self.cleanup_temp:
+                shutil.rmtree(self.temp_directory, ignore_errors=True)
+            return best
+
+    def publish_best_organism(self, best):
+        """Write the winning organism to its run folder, and hand it back hydrated.
+
+        The caller gets an organism it can read straight away -- callers do reach
+        into knowledge for predictions and metrics -- which sequential runs have
+        to restore, because they released it to free memory.
+
+        Args:
+            best: The highest-fitness organism.
+        """
+        if self.sequential:
+            # Every organism shared one timestamped folder name, so the loop gave
+            # them their own numbered folders instead. Reload the winner's state
+            # and republish it under the normal name.
+            best.knowledge = Organism.load_state(
+                best.folder, "knowledge.json", best.save_load_funcs
+            )
+            best.new_version()
+        best.save()
+        if self.save_organisms == "all":
+            self.publish_losing_organisms(best)
+
+    def publish_losing_organisms(self, best):
+        """Keep every other organism's folder, for comparing the run's branches.
+
+        They go under the winner's folder rather than beside it, so that
+        Organism.load(version="latest") still resolves to a real version.
+
+        Args:
+            best: The already-published winning organism.
+        """
+        for i, organism in enumerate(self.population):
+            if organism is best:
+                continue
+            destination = f"{best.folder}/population/{i}"
+            if self.sequential:
+                # Already on disk under the temp tree, which cleanup_temp is
+                # about to remove. Duplicate genomes point at the twin that ran,
+                # so every index gets the artifacts its genome produced.
+                shutil.copytree(organism.folder, destination, dirs_exist_ok=True)
+            else:
+                organism.folder = destination
+                organism.save()
+
+
+def find_checkpoint_prefixes(population):
+    """Return the DNA prefixes worth caching, and how many organisms share each.
+
+    A prefix earns a checkpoint only where the population actually forks after
+    it: more than one organism shares it, and they do not all agree on the next
+    gene. Every shared prefix would mean writing the whole state once per gene;
+    only the fork points are ever read back.
+
+    Args:
+        population: The organisms about to run.
+
+    Returns:
+        {dna prefix: number of organisms sharing it}.
+    """
+    if len(population) < 2:
+        return {}
+    n_genes = min(len(organism.dna) for organism in population)
+    prefixes = [
+        [dna2str(o.dna[: i + 1], o.parameters) for i in range(n_genes)]
+        for o in population
+    ]
+
+    checkpoints = {}
+    # The last gene has nothing after it to fork, so it is never a checkpoint.
+    for i in range(n_genes - 1):
+        sharers = {}  # prefix -> [organisms sharing it, prefixes they go on to]
+        for organism_prefixes in prefixes:
+            n_sharing, next_prefixes = sharers.setdefault(
+                organism_prefixes[i], [0, set()]
+            )
+            sharers[organism_prefixes[i]][0] = n_sharing + 1
+            next_prefixes.add(organism_prefixes[i + 1])
+        for prefix, (n_sharing, next_prefixes) in sharers.items():
+            if n_sharing > 1 and len(next_prefixes) > 1:
+                checkpoints[prefix] = n_sharing
+    return checkpoints
 
 
 def natural_selection(
