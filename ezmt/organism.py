@@ -281,6 +281,15 @@ class Organism:
             )
 
     def save(self):
+        """Write the organism to self.folder.
+
+        Returns:
+            The saved knowledge as file paths and JSON-native scalars, or {} when
+            the organism has no knowledge. Callers that only need the organism's
+            results -- a score, a path to a figure -- can keep that dict and drop
+            their reference to the live objects, which is how sequential runs
+            release a trained model and its datasets from memory.
+        """
         create_folder(self.folder)
 
         # save dna
@@ -293,8 +302,11 @@ class Organism:
             json.dump(self.parameters, f, indent=4)
 
         # save state aka knowledge
+        saved_knowledge = {}
         if self.knowledge:
-            self.save_state(self.folder, "knowledge.json", self.knowledge)
+            saved_knowledge = self.save_state(
+                self.folder, "knowledge.json", self.knowledge
+            )
 
         # save the custom saving and loading functions
         if self.save_load_funcs:
@@ -306,8 +318,18 @@ class Organism:
                     folder=self.folder,
                     indent=4,
                 )
+        return saved_knowledge
 
     def save_state(self, folder, file_name, state):
+        """Write ``state`` to folder/file_name, spilling objects to side files.
+
+        Returns:
+            The written state: every object replaced by the file holding it,
+            everything else left as the JSON-native value it already was. It is
+            read back from the file just written rather than assembled here,
+            because ThePickler substitutes DataFrames for parquet paths inside
+            json.dump and never reports those substitutions back to this dict.
+        """
         create_folder(folder)
         state = dict(state)  # shallow copy. save_load_funcs only apply at top layer
         for key, val in state.items():
@@ -315,8 +337,11 @@ class Organism:
             if key in self.save_load_funcs:
                 # save it and replace the object in self.knowledge with the file name
                 state[key] = self.save_load_funcs[key]["save"](folder, key, val)
-        with open(f"{folder}/{file_name}", "w") as f:
+        path = f"{folder}/{file_name}"
+        with open(path, "w") as f:
             json.dump(state, f, cls=ThePickler, folder=folder, indent=4)
+        with open(path, "r") as f:
+            return json.load(f)
 
     def create_formatted_dna(self):
         """
