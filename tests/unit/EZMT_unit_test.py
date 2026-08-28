@@ -308,68 +308,75 @@ class TestModelTunerSelectionAndReproduction(unittest.TestCase):
         self.assertTrue(original_top_elite_dna.issubset(new_population_dna), "The DNA of the top elite organisms should still be present in the new population.")
 
 
-class TestModelTunerExperiencePopulation(unittest.TestCase):
+class TestModelTunerExperiencePopulation(unittest.IsolatedAsyncioTestCase):
+    """GPU branches are dispatched last, so CPU work overlaps with them.
+
+    A GPU gene holds the semaphore for its whole run. Starting one before the
+    CPU branches have been dispatched leaves those branches waiting behind it
+    for no reason, so the order the branches are handed to run_gene matters.
+
+    This asserts the dispatch order rather than wall-clock time: the branches
+    genuinely run concurrently once dispatched, so timing them is a race.
+    """
 
     def setUp(self):
-        # Sample data and model space setup with variation for testing
-        data = pd.DataFrame({
-            'feature1': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-            'feature2': [10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
-            'label': [0, 1, 0, 1, 0, 1, 0, 1, 0, 1]
-        })
-        
-        # Model space with variation in functions and arguments
         self.model_space = [
             [
-                {'name': 'gene1', 'train': {'func': time.sleep, 'outputs': 'output1', 'args': [[3]], 'gpu': True}},
-                {'name': 'gene2', 'train': {'func': time.sleep, 'outputs': 'output1', 'args': [[3]]}}
+                {'name': 'gpu_gene', 'train': {'func': time.time, 'outputs': 'output1', 'gpu': True}},
+                {'name': 'cpu_gene', 'train': {'func': time.time, 'outputs': 'output1'}},
             ],
             [
                 {'name': 'gene3', 'train': {'func': time.time, 'outputs': 'output2', 'gpu': True}}
             ]
         ]
-        self.model_tuner = ModelTuner(self.model_space, {}, data=data, y_col='label', pop_size=20)
+        self.model_tuner = ModelTuner(self.model_space, {}, pop_size=2)
         self.model_tuner.populate_init('test')
+        # populate_init samples at random; the ordering only means something
+        # with one of each kind present.
+        for organism, gene_space in zip(self.model_tuner.population, self.model_space[0]):
+            organism.dna[0] = deepcopy(gene_space)
 
+    async def _dispatch_order(self):
+        """Return the gene name of each branch in the order run_gene saw it."""
+        order = []
+        real_run_gene = Organism.run_gene
 
-    @patch('ezmt.organism.Organism.make_decision')
-    def test_correct_number_of_decisions_on_correct_processes(self, mock_make_decision):
-        # TODO This test should be broken up
-        # 1. Tests that the right number of jobs are put through the multiprocessing pool
-        # 2. Tests that the right number of jobs are started synchronously in the parent process
-        # 3. Tests that only unique jobs are started.
-        #    Population of 20 with only 3 unique conbinations of genes should not do redundant work.
-        x_train, x_test, y_train, y_test = next(self.model_tuner.data_fold_generator)
-        init_state = {'x_train': x_train, 'x_test': x_test, 'y_train': y_train, 'y_test': y_test}
+        async def spy(organism, mode, gene_index, state, pool=None, log_state=False):
+            if gene_index == 0:
+                order.append(organism.dna[0]['name'])
+            return await real_run_gene(
+                organism, mode, gene_index, state, pool, log_state
+            )
 
-        mock_make_decision.return_value = {**init_state, 'output1': 1}
+        with patch.object(Organism, 'run_gene', spy):
+            await self.model_tuner.experience_population({}, None)
+        return order
 
-        self.model_tuner.pool.apply_async = MagicMock()
-        self.model_tuner.experience_population(init_state)
-        # First generation should have 1 gpu, 1 cpu
-        # Second generation is only gpu, making gg & cg between the two generations
-        self.assertEqual(mock_make_decision.call_count, 3)
-        self.assertEqual(self.model_tuner.pool.apply_async.call_count, 1)
+    async def test_cpu_branches_are_dispatched_before_gpu_branches(self):
+        # Act
+        order = await self._dispatch_order()
+        # Assert
+        self.assertEqual(order, ['cpu_gene', 'gpu_gene'])
 
-    def test_cpu_steps_started_before_gpu(self):
-        # If any gpu (synchronous) jobs start before any cpu (parallel) jobs, the total sleep would be 6 or more.
-        # gpu jobs should always start after all cpu jobs for the current step of experience_population
-        x_train, x_test, y_train, y_test = next(self.model_tuner.data_fold_generator)
-        init_state = {'x_train': x_train, 'x_test': x_test, 'y_train': y_train, 'y_test': y_test}
+    async def test_the_order_does_not_depend_on_the_population_order(self):
+        # Arrange - the population arrives in whatever order selection left it,
+        # so the sort has to impose the order rather than preserve it.
+        self.model_tuner.population.reverse()
+        # Act
+        order = await self._dispatch_order()
+        # Assert
+        self.assertEqual(order, ['cpu_gene', 'gpu_gene'])
 
-        self.model_tuner.population = sorted(
-            self.model_tuner.population, key=lambda org: org.dna[0]['train']['gpu']
-        )
-        t = time.time()
-        self.model_tuner.experience_population(init_state)
-        assert time.time() - t < 5
-
-        self.model_tuner.population = sorted(
-            self.model_tuner.population, key=lambda org: not org.dna[0]['train']['gpu']
-        )
-        t = time.time()
-        self.model_tuner.experience_population(init_state)
-        assert time.time() - t < 5
+    async def test_only_unique_branches_are_run(self):
+        # Arrange - twenty organisms sharing two branches must not do twenty
+        # branches' worth of work.
+        self.model_tuner.population = [
+            self.model_tuner.population[i % 2] for i in range(20)
+        ]
+        # Act
+        order = await self._dispatch_order()
+        # Assert
+        self.assertEqual(len(order), 2)
 
 
 if __name__ == '__main__':
