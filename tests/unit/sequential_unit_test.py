@@ -1,4 +1,4 @@
-import os
+﻿import os
 import shutil
 import tempfile
 import unittest
@@ -67,24 +67,42 @@ class SequentialTestCase(unittest.IsolatedAsyncioTestCase):
         self.directory = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.directory, ignore_errors=True)
 
+    def new_tuner(self, n_organisms=4, **kwargs):
+        options = {"sequential": True, "goal": "max", "directory": self.directory}
+        options.update(kwargs)
+        return ModelTuner(
+            build_model_space(),
+            {"mode": DiscreteNonOrdinal(["a", "b"])},
+            pop_size=n_organisms,
+            **options,
+        )
+
     def build_tuner(self, modes=("a", "a", "b", "b"), **kwargs):
-        """A tuner whose population has exactly the given hyperparameter values.
+        """A populated tuner whose organisms have exactly the given modes.
 
         populate_init samples at random, which would make the number of branches
         -- the thing every test here is about -- vary run to run.
         """
-        options = {"sequential": True, "goal": "max", "directory": self.directory}
-        options.update(kwargs)
-        tuner = ModelTuner(
-            build_model_space(),
-            {"mode": DiscreteNonOrdinal(["a", "b"])},
-            pop_size=len(modes),
-            **options,
-        )
+        tuner = self.new_tuner(n_organisms=len(modes), **kwargs)
         tuner.populate_init("test")
         for organism, mode in zip(tuner.population, modes):
             organism.parameters["mode"] = mode
         return tuner
+
+    async def run_tuner(self, modes=("a", "a", "b", "b"), **kwargs):
+        """Run a tuner end to end with the given modes.
+
+        run() populates the tuner itself, and populate_init appends rather than
+        replaces, so this pins the sampling instead of pre-building a population
+        that run() would then add a second one to.
+        """
+        tuner = self.new_tuner(n_organisms=len(modes), **kwargs)
+        with patch(
+            "ezmt.model_tuner.choose_hyperparams",
+            side_effect=[{"mode": mode} for mode in modes],
+        ):
+            best = await tuner.run("test")
+        return tuner, best
 
 
 class TestFindCheckpointPrefixes(SequentialTestCase):
@@ -294,14 +312,9 @@ class TestNoPoolInSequentialMode(SequentialTestCase):
 class TestPublishingTheBestOrganism(SequentialTestCase):
     """run() leaves the winner on disk and readable, on both paths."""
 
-    async def _run(self, **kwargs):
-        tuner = self.build_tuner(**kwargs)
-        best = await tuner.run("test")
-        return tuner, best
-
     async def test_the_winner_lands_in_the_normal_run_folder(self):
         # Arrange / Act
-        tuner, best = await self._run()
+        tuner, best = await self.run_tuner()
         # Assert - not the numbered temp folder the loop used
         self.assertTrue(best.folder.startswith(f"{self.directory}/test/"))
         self.assertNotIn(tuner.temp_directory, best.folder)
@@ -310,34 +323,76 @@ class TestPublishingTheBestOrganism(SequentialTestCase):
     async def test_the_winners_knowledge_comes_back_as_real_objects(self):
         # Arrange - callers read predictions and metrics straight off knowledge,
         # so a file name in place of a frame is not good enough.
-        _, best = await self._run()
+        _, best = await self.run_tuner()
         # Assert
         self.assertIsInstance(best.knowledge["frame"], pd.DataFrame)
 
     async def test_the_concurrent_path_also_saves_the_winner(self):
         # Arrange - this used to be the caller's job, which meant every caller
         # had to remember to do it.
-        _, best = await self._run(sequential=False)
+        _, best = await self.run_tuner(sequential=False)
         # Assert
         self.assertTrue(os.path.exists(f"{best.folder}/knowledge.json"))
         self.assertIsInstance(best.knowledge["frame"], pd.DataFrame)
 
     async def test_the_winner_is_the_highest_scoring_organism(self):
         # Arrange - mode "b" scores 2.0 higher than mode "a"
-        _, best = await self._run(modes=("a", "a", "b", "b"))
+        _, best = await self.run_tuner(modes=("a", "a", "b", "b"))
         # Assert
         self.assertEqual(best.parameters["mode"], "b")
 
     async def test_cleanup_temp_removes_the_checkpoint_tree(self):
         # Arrange / Act
-        tuner, best = await self._run(cleanup_temp=True)
+        tuner, best = await self.run_tuner(cleanup_temp=True)
         # Assert - and the published winner must survive the cleanup
         self.assertFalse(os.path.exists(tuner.temp_directory))
         self.assertTrue(os.path.exists(f"{best.folder}/knowledge.json"))
 
     async def test_the_temp_tree_is_kept_by_default(self):
-        tuner, _ = await self._run()
+        tuner, _ = await self.run_tuner()
         self.assertTrue(os.path.exists(tuner.temp_directory))
+
+
+class TestSavingEveryOrganism(SequentialTestCase):
+    """save_organisms="all" keeps the losers, for comparing a run's branches."""
+
+    async def test_only_the_winner_is_saved_by_default(self):
+        # Arrange / Act
+        _, best = await self.run_tuner()
+        # Assert
+        self.assertFalse(os.path.exists(f"{best.folder}/population"))
+
+    async def test_every_other_organism_is_kept_under_the_winner(self):
+        # Arrange - nested rather than beside the winner, so that
+        # Organism.load(version="latest") still resolves to a real version.
+        _, best = await self.run_tuner(save_organisms="all")
+        # Act
+        kept = os.listdir(f"{best.folder}/population")
+        # Assert - four organisms, minus the winner
+        self.assertEqual(len(kept), 3)
+
+    async def test_a_kept_organism_is_loadable_on_its_own(self):
+        # Arrange - a folder of file names nobody can open is not an artifact.
+        _, best = await self.run_tuner(save_organisms="all")
+        kept = sorted(os.listdir(f"{best.folder}/population"))[0]
+        folder = f"{best.folder}/population/{kept}"
+        # Act
+        state = Organism.load_state(folder, "knowledge.json", best.save_load_funcs)
+        # Assert
+        self.assertIsInstance(state["frame"], pd.DataFrame)
+        self.assertIsInstance(state["score"], float)
+
+    async def test_the_concurrent_path_keeps_them_too(self):
+        # Arrange - the option means the same thing on both paths, or it is a
+        # trap for whoever switches between them.
+        _, best = await self.run_tuner(sequential=False, save_organisms="all")
+        # Assert
+        self.assertEqual(len(os.listdir(f"{best.folder}/population")), 3)
+
+    async def test_keeping_the_losers_does_not_disturb_the_winner(self):
+        _, best = await self.run_tuner(save_organisms="all")
+        self.assertTrue(os.path.exists(f"{best.folder}/knowledge.json"))
+        self.assertIsInstance(best.knowledge["frame"], pd.DataFrame)
 
 
 class TestSequentialConfiguration(unittest.TestCase):

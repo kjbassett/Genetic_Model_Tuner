@@ -186,13 +186,20 @@ class ModelTuner:
             len(self.population), len(checkpoints),
         )
         results = {}
+        folders = {}
         total = len(self.population)
         for n, organism in enumerate(self.population, start=1):
             dna = dna2str(organism.dna, organism.parameters)
             if dna in results:
                 _log.info("Organism %d/%d: identical genome already run", n, total)
+                # Point it at the twin that did run. Leaving it on the folder
+                # populate_init handed out is worse than useless: every organism
+                # gets the same timestamped name, so it aliases whichever
+                # organism is published there at the end of the run.
+                organism.folder = folders[dna]
                 continue
             organism.folder = f"{self.temp_directory}/organisms/{n - 1}"
+            folders[dna] = organism.folder
             state, first_gene = self.restore_from_checkpoint(organism, base_state)
             _log.info(
                 "Organism %d/%d: starting at gene %d/%d",
@@ -437,6 +444,30 @@ class ModelTuner:
             )
             best.new_version()
         best.save()
+        if self.save_organisms == "all":
+            self.publish_losing_organisms(best)
+
+    def publish_losing_organisms(self, best):
+        """Keep every other organism's folder, for comparing the run's branches.
+
+        They go under the winner's folder rather than beside it, so that
+        Organism.load(version="latest") still resolves to a real version.
+
+        Args:
+            best: The already-published winning organism.
+        """
+        for i, organism in enumerate(self.population):
+            if organism is best:
+                continue
+            destination = f"{best.folder}/population/{i}"
+            if self.sequential:
+                # Already on disk under the temp tree, which cleanup_temp is
+                # about to remove. Duplicate genomes point at the twin that ran,
+                # so every index gets the artifacts its genome produced.
+                shutil.copytree(organism.folder, destination, dirs_exist_ok=True)
+            else:
+                organism.folder = destination
+                organism.save()
 
 
 def find_checkpoint_prefixes(population):
