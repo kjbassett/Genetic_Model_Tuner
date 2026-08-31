@@ -106,12 +106,29 @@ class ModelTuner:
             gene_mutate_prob=0.05,
             nuc_mutate_prob=0.1,
     ):
+        """Build the next generation from this one.
+
+        Args:
+            elitism: How many top organisms carry forward unchanged. Forced to
+                at least 1: with 0 the run can end on a generation worse than one
+                it already had, and the result it returns is not the best it
+                found.
+            reproduction: 'asexual' or 'sexual'.
+            gene_mutate_prob: Per-gene chance of a function mutation.
+            nuc_mutate_prob: Per-hyperparameter chance of a value mutation.
+        """
+        elitism = max(1, elitism)
         # Generate population from previous generation
         # keep top models
         self.population = sorted(self.population, reverse=True)
         new_pop = self.population[0:elitism]
-        for member in new_pop:
-            member.reset()  # Apply the veil
+        # Deliberately NOT reset. These organisms already ran, and their score is
+        # the measured one. Clearing it made the next generation re-run them, and
+        # training is stochastic -- so an elite could come back worse than the
+        # score that earned it the slot, and did: a run scored 0.002214 in
+        # generation 1 and returned 0.001206 from generation 2, having bred away
+        # the better organism it had already found. Keeping saved_result is what
+        # the run loop uses to recognise them.
 
         # Determine who survives and can reproduce
         survivors = natural_selection(self.population)
@@ -198,6 +215,24 @@ class ModelTuner:
                 # organism is published there at the end of the run.
                 organism.folder = folders[dna]
                 continue
+            # An organism with a saved result already ran, in an earlier
+            # generation, and select_and_reproduce kept it rather than resetting
+            # it. Re-running it would spend a full training to answer a question
+            # already answered, and answer it differently, because training is
+            # stochastic. The carried value is the saved dict of file paths, not
+            # live state, so this costs no memory. Its folder is untouched
+            # because elites sort to the front and skip the assignment below,
+            # which numbers by population position.
+            #
+            # Only valid while the folds are static. With a rolling fold each
+            # generation trains on different rows, so a score carried across one
+            # is not comparable to its peers and the organism has to run again.
+            carried = organism.saved_result if self.folds_are_static else None
+            if carried:
+                _log.info("Organism %d/%d: carried forward, not re-run", n, total)
+                results[dna] = carried
+                folders[dna] = organism.folder
+                continue
             organism.folder = f"{self.temp_directory}/organisms/{n - 1}"
             folders[dna] = organism.folder
             state, first_gene = self.restore_from_checkpoint(organism, base_state)
@@ -213,6 +248,9 @@ class ModelTuner:
                 self.save_fork_checkpoint(organism, i, state, checkpoints)
             organism.knowledge = state
             results[dna] = organism.save()
+            # Kept so a later generation can carry this organism forward without
+            # re-running it. Paths and scalars only.
+            organism.saved_result = results[dna]
             # The saved dict names every output as a file, so dropping the live
             # state here is what actually frees the model and its datasets.
             organism.knowledge = {}
