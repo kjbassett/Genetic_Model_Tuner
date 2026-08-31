@@ -83,6 +83,10 @@ class Organism:
     ):
         self.name = name
         self.directory = directory
+        # The dict of file paths this organism's last run saved. Its presence
+        # is how a later generation recognises an organism it can carry forward
+        # instead of re-running. Cleared by reset().
+        self.saved_result = None
         # self.dna represents the sequence of functions
         self.dna = dna if dna else []
         # self.parameters holds the arg values for the functions in self.dna
@@ -495,6 +499,7 @@ class Organism:
         self.score = 0
         self.fitness = 0
         self.knowledge = {}
+        self.saved_result = None
 
 
 def get_function_reference(func):
