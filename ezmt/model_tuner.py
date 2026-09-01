@@ -215,14 +215,22 @@ class ModelTuner:
                 # organism is published there at the end of the run.
                 organism.folder = folders[dna]
                 continue
+            # Keyed on the genome, not the loop index. Numbering by position
+            # let a later generation reuse a folder an earlier one still owned:
+            # a carried-forward elite kept its old path while the organism at
+            # that position overwrote it, and the run published the wrong
+            # organism's data under the winner's score. A genome-keyed folder is
+            # stable across generations for an organism that has not changed,
+            # and distinct for one that has.
+            organism.folder = self.organism_folder(dna)
+            folders[dna] = organism.folder
+
             # An organism with a saved result already ran, in an earlier
             # generation, and select_and_reproduce kept it rather than resetting
             # it. Re-running it would spend a full training to answer a question
             # already answered, and answer it differently, because training is
             # stochastic. The carried value is the saved dict of file paths, not
-            # live state, so this costs no memory. Its folder is untouched
-            # because elites sort to the front and skip the assignment below,
-            # which numbers by population position.
+            # live state, so this costs no memory.
             #
             # Only valid while the folds are static. With a rolling fold each
             # generation trains on different rows, so a score carried across one
@@ -231,10 +239,7 @@ class ModelTuner:
             if carried:
                 _log.info("Organism %d/%d: carried forward, not re-run", n, total)
                 results[dna] = carried
-                folders[dna] = organism.folder
                 continue
-            organism.folder = f"{self.temp_directory}/organisms/{n - 1}"
-            folders[dna] = organism.folder
             state, first_gene = self.restore_from_checkpoint(organism, base_state)
             _log.info(
                 "Organism %d/%d: starting at gene %d/%d",
@@ -255,6 +260,23 @@ class ModelTuner:
             # state here is what actually frees the model and its datasets.
             organism.knowledge = {}
         return results
+
+    def organism_folder(self, dna):
+        """Return the folder an organism's outputs live in.
+
+        Keyed on the genome so it is stable for an organism carried across
+        generations and distinct for one that is not. Numbering by population
+        position instead let generation 2 overwrite a folder generation 1 still
+        owned.
+
+        Args:
+            dna: The organism's rendered DNA string.
+
+        Returns:
+            Path to the organism's folder.
+        """
+        digest = hashlib.sha1(dna.encode("utf-8")).hexdigest()[:_DIGEST_LENGTH]
+        return f"{self.temp_directory}/organisms/{digest}"
 
     def checkpoint_folder(self, prefix):
         """Return the folder a DNA prefix's cached state lives in."""
