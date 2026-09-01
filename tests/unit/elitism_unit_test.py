@@ -174,5 +174,58 @@ class TestCarryingRequiresStaticFolds(unittest.TestCase):
         self.assertFalse(self._loop_decision(True, None))
 
 
+class TestOrganismFolders(unittest.TestCase):
+    """A folder must not be reused by a different organism.
+
+    Numbering by population position let generation 2 overwrite a folder
+    generation 1 still owned. A carried-forward elite kept its old path while
+    the organism at that position wrote over it, so the run published that
+    organism's data under the elite's score: a run reported best +0.000482 and
+    saved an organism scoring -0.000133.
+    """
+
+    @staticmethod
+    def _tuner():
+        tuner = ModelTuner.__new__(ModelTuner)
+        tuner.temp_directory = "/tmp/x"
+        return tuner
+
+    def test_the_same_genome_maps_to_the_same_folder(self):
+        # Arrange - this is what lets a carried elite still find its outputs.
+        tuner = self._tuner()
+        self.assertEqual(
+            tuner.organism_folder("dna-a"), tuner.organism_folder("dna-a"))
+
+    def test_different_genomes_map_to_different_folders(self):
+        tuner = self._tuner()
+        self.assertNotEqual(
+            tuner.organism_folder("dna-a"), tuner.organism_folder("dna-b"))
+
+    def test_the_folder_is_named_by_digest_not_by_an_index(self):
+        # Arrange - a small integer name is what let generation 2 land on
+        # generation 1's folder. The name has to come from the genome.
+        tuner = self._tuner()
+
+        # Act
+        name = tuner.organism_folder("dna-a").rsplit("/", 1)[-1]
+
+        # Assert
+        self.assertFalse(name.isdigit(), f"{name!r} is positional")
+        self.assertTrue(all(c in "0123456789abcdef" for c in name))
+        self.assertGreater(len(name), 8)
+
+    def test_position_is_not_an_input(self):
+        # Arrange - the signature is the guarantee: nothing about where an
+        # organism sits in the population can reach the path.
+        import inspect
+
+        parameters = set(inspect.signature(ModelTuner.organism_folder).parameters)
+        self.assertEqual(parameters, {"self", "dna"})
+
+    def test_folders_sit_under_the_temp_directory(self):
+        tuner = self._tuner()
+        self.assertTrue(tuner.organism_folder("dna-a").startswith("/tmp/x/organisms/"))
+
+
 if __name__ == "__main__":
     unittest.main()
