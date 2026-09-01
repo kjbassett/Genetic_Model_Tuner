@@ -68,6 +68,11 @@ def copies_arguments(func, run_in_parent_process=False, has_pool=True):
     )
 
 
+# Marks a folder as a run rather than a generation. Kept in step with
+# ezmt.model_tuner.RUN_SUMMARY_FILE.
+RUN_SUMMARY_FILE = "run_summary.json"
+
+
 class Organism:
 
     def __init__(
@@ -395,11 +400,64 @@ class Organism:
 
         return dna_copy, knowledge_to_save
 
+    @staticmethod
+    def latest_version(directory, name):
+        """Return the most recent run version for a name.
+
+        Only entries holding a run summary count. A run folder now contains
+        generation subfolders named "1", "2" and so on, and listing blindly
+        would sort one of those last and resolve a run name to the string "2".
+
+        Args:
+            directory: Root organisms directory.
+            name: Run name.
+
+        Returns:
+            The newest version string.
+        """
+        root = f"{directory}/{name}"
+        versions = [
+            entry for entry in sorted(os.listdir(root))
+            if os.path.isfile(os.path.join(root, entry, RUN_SUMMARY_FILE))
+        ]
+        if not versions:
+            # Predates run summaries: fall back to the old behaviour.
+            return sorted(os.listdir(root))[-1]
+        return versions[-1]
+
     @classmethod
-    def load(cls, name, version: str = "latest", gene_index=None, directory="organisms"):
+    def load(cls, name, version: str = "latest", gene_index=None,
+             directory="organisms", generation=None, organism_index=None):
+        """Load a saved organism.
+
+        Args:
+            name: Run name the organism was saved under.
+            version: Run version, or "latest" for the most recent.
+            gene_index: Load partial knowledge up to this gene, or None for all.
+            directory: Root organisms directory.
+            generation: Which generation to load from. Defaults to the run's
+                best, read from run_summary.json.
+            organism_index: Position within that generation. Defaults with
+                generation.
+
+        Returns:
+            The loaded Organism.
+        """
         if version == "latest":
-            version = os.listdir(f"{directory}/{name}/")[-1]
+            version = cls.latest_version(directory, name)
         folder = f"{directory}/{name}/{version}"
+
+        # A run folder holds a summary and one subfolder per generation, so the
+        # organism lives one or two levels down. Which one is recorded in the
+        # summary rather than guessed.
+        summary_path = os.path.join(folder, RUN_SUMMARY_FILE)
+        if os.path.isfile(summary_path):
+            with open(summary_path) as f:
+                summary = json.load(f)
+            if generation is None or organism_index is None:
+                folder = os.path.join(folder, summary["best"]["folder"])
+            else:
+                folder = os.path.join(folder, str(generation), str(organism_index))
 
         # Load DNA
         with open(os.path.join(folder, "dna.json"), "r") as f:

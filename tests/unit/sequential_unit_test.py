@@ -101,7 +101,10 @@ class SequentialTestCase(unittest.IsolatedAsyncioTestCase):
             "ezmt.model_tuner.choose_hyperparams",
             side_effect=[{"mode": mode} for mode in modes],
         ):
-            best = await tuner.run("test")
+            # run() returns (organism, summary) now: a caller needs the whole
+            # run's populations to record it, not only the winner.
+            best, summary = await tuner.run("test")
+        self.last_summary = summary
         return tuner, best
 
 
@@ -354,28 +357,58 @@ class TestPublishingTheBestOrganism(SequentialTestCase):
 
 
 class TestSavingEveryOrganism(SequentialTestCase):
-    """save_organisms="all" keeps the losers, for comparing a run's branches."""
+    """Organisms live at {version}/{generation}/{index}, and losers are pruned.
 
-    async def test_only_the_winner_is_saved_by_default(self):
+    They now write straight to their final folder rather than to a temp tree the
+    run discards, so "best" has to mean deleting the others afterwards. Without
+    that a run keeps every organism's datasets and model weights.
+    """
+
+    def _organism_folders(self, tuner):
+        """Every {generation}/{index} folder present under the run."""
+        found = []
+        for generation in sorted(os.listdir(tuner.run_folder())):
+            path = os.path.join(tuner.run_folder(), generation)
+            if generation.isdigit() and os.path.isdir(path):
+                found += [f"{generation}/{i}" for i in sorted(os.listdir(path))]
+        return found
+
+    async def test_only_the_winner_survives_by_default(self):
         # Arrange / Act
-        _, best = await self.run_tuner()
+        tuner, _ = await self.run_tuner()
         # Assert
-        self.assertFalse(os.path.exists(f"{best.folder}/population"))
+        self.assertEqual(
+            self._organism_folders(tuner),
+            [self.last_summary["best"]["folder"]],
+        )
 
-    async def test_every_other_organism_is_kept_under_the_winner(self):
-        # Arrange - nested rather than beside the winner, so that
-        # Organism.load(version="latest") still resolves to a real version.
-        _, best = await self.run_tuner(save_organisms="all")
+    async def test_every_distinct_genome_is_kept_when_asked(self):
+        # Arrange - four organisms but two genomes, and identical genomes share
+        # one computation, so they share one folder. Writing a copy per position
+        # would duplicate identical state.
+        tuner, _ = await self.run_tuner(save_organisms="all")
         # Act
-        kept = os.listdir(f"{best.folder}/population")
-        # Assert - four organisms, minus the winner
-        self.assertEqual(len(kept), 3)
+        folders = self._organism_folders(tuner)
+        # Assert
+        self.assertEqual(len(folders), 2)
+        self.assertEqual(len(self.last_summary["generations_detail"][0]["organisms"]), 4)
+
+    async def test_generation_and_index_are_both_in_the_path(self):
+        # Arrange - this is what makes a collision impossible. Numbering by
+        # position alone let a carried elite keep a path the next generation's
+        # organism then overwrote, and the run published the wrong data.
+        tuner, _ = await self.run_tuner(save_organisms="all")
+        # Assert
+        for folder in self._organism_folders(tuner):
+            with self.subTest(folder=folder):
+                generation, index = folder.split("/")
+                self.assertTrue(generation.isdigit())
+                self.assertTrue(index.isdigit())
 
     async def test_a_kept_organism_is_loadable_on_its_own(self):
         # Arrange - a folder of file names nobody can open is not an artifact.
-        _, best = await self.run_tuner(save_organisms="all")
-        kept = sorted(os.listdir(f"{best.folder}/population"))[0]
-        folder = f"{best.folder}/population/{kept}"
+        tuner, best = await self.run_tuner(save_organisms="all")
+        folder = os.path.join(tuner.run_folder(), self._organism_folders(tuner)[0])
         # Act
         state = Organism.load_state(folder, "knowledge.json", best.save_load_funcs)
         # Assert
@@ -385,9 +418,19 @@ class TestSavingEveryOrganism(SequentialTestCase):
     async def test_the_concurrent_path_keeps_them_too(self):
         # Arrange - the option means the same thing on both paths, or it is a
         # trap for whoever switches between them.
-        _, best = await self.run_tuner(sequential=False, save_organisms="all")
+        tuner, _ = await self.run_tuner(sequential=False, save_organisms="all")
         # Assert
-        self.assertEqual(len(os.listdir(f"{best.folder}/population")), 3)
+        self.assertEqual(len(self._organism_folders(tuner)), 2)
+
+    async def test_pruning_leaves_the_summary_behind(self):
+        # Arrange - the losers' scores have to outlive their folders, or the
+        # run's only record of them is gone.
+        tuner, _ = await self.run_tuner()
+        # Act
+        organisms = self.last_summary["generations_detail"][0]["organisms"]
+        # Assert
+        self.assertEqual(len(organisms), 4)
+        self.assertTrue(all(o["score"] is not None for o in organisms))
 
     async def test_keeping_the_losers_does_not_disturb_the_winner(self):
         _, best = await self.run_tuner(save_organisms="all")

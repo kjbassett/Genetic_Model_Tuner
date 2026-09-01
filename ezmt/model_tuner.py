@@ -1,5 +1,7 @@
 import asyncio
+import datetime
 import hashlib
+import json
 import logging
 import numpy as np
 import os
@@ -18,6 +20,10 @@ from ezmt.organism import Organism, dna2str
 from ezmt.common_funcs import resolve_log_states
 from ezmt.config_validation import validate_config
 from ezmt.the_pickler import check_state_picklability
+
+# Written at the version level. Its presence is what marks a folder as a run
+# rather than a generation, which is how Organism.load resolves "latest".
+RUN_SUMMARY_FILE = "run_summary.json"
 
 _log = logging.getLogger("ezmt.tuner")
 
@@ -90,6 +96,14 @@ class ModelTuner:
         self.save_organisms = save_organisms
         self.fold_key = "0"
         self.metrics = []
+        # One entry per generation, each a list of per-organism scalars. Kept so
+        # a caller can persist a whole run without reaching into tuner
+        # internals: run() returns it, and it is what run_summary.json holds.
+        self.generation_history = []
+        self.started_at = None
+        self.run_version = None
+        self.run_name = None
+        self.current_generation = 0
 
     def populate_init(self, run_name):
         # Generate initial population
@@ -215,16 +229,6 @@ class ModelTuner:
                 # organism is published there at the end of the run.
                 organism.folder = folders[dna]
                 continue
-            # Keyed on the genome, not the loop index. Numbering by position
-            # let a later generation reuse a folder an earlier one still owned:
-            # a carried-forward elite kept its old path while the organism at
-            # that position overwrote it, and the run published the wrong
-            # organism's data under the winner's score. A genome-keyed folder is
-            # stable across generations for an organism that has not changed,
-            # and distinct for one that has.
-            organism.folder = self.organism_folder(dna)
-            folders[dna] = organism.folder
-
             # An organism with a saved result already ran, in an earlier
             # generation, and select_and_reproduce kept it rather than resetting
             # it. Re-running it would spend a full training to answer a question
@@ -237,9 +241,17 @@ class ModelTuner:
             # is not comparable to its peers and the organism has to run again.
             carried = organism.saved_result if self.folds_are_static else None
             if carried:
+                # Keeps the folder it ran in. Reassigning one here would point
+                # the summary at a generation that never wrote this organism.
                 _log.info("Organism %d/%d: carried forward, not re-run", n, total)
                 results[dna] = carried
+                folders[dna] = organism.folder
                 continue
+
+            # Generation and index are both in the path, so a later generation
+            # cannot land on an earlier one's folder.
+            organism.folder = self.organism_folder(self.current_generation, n - 1)
+            folders[dna] = organism.folder
             state, first_gene = self.restore_from_checkpoint(organism, base_state)
             _log.info(
                 "Organism %d/%d: starting at gene %d/%d",
@@ -260,23 +272,6 @@ class ModelTuner:
             # state here is what actually frees the model and its datasets.
             organism.knowledge = {}
         return results
-
-    def organism_folder(self, dna):
-        """Return the folder an organism's outputs live in.
-
-        Keyed on the genome so it is stable for an organism carried across
-        generations and distinct for one that is not. Numbering by population
-        position instead let generation 2 overwrite a folder generation 1 still
-        owned.
-
-        Args:
-            dna: The organism's rendered DNA string.
-
-        Returns:
-            Path to the organism's folder.
-        """
-        digest = hashlib.sha1(dna.encode("utf-8")).hexdigest()[:_DIGEST_LENGTH]
-        return f"{self.temp_directory}/organisms/{digest}"
 
     def checkpoint_folder(self, prefix):
         """Return the folder a DNA prefix's cached state lives in."""
@@ -428,6 +423,7 @@ class ModelTuner:
                     worst = data['score']
                     worst_dna = dna
 
+        self.record_generation()
         self.metrics.append({'unique_organisms': len(unique_organisms.keys()),
                              'average': np.mean(scores),
                              'variance': np.var(scores),
@@ -446,7 +442,22 @@ class ModelTuner:
                 model.fitness = (model.score - worst) / (best - worst)
 
     async def run(self, run_name, log_states: Union[bool, int, Iterable[int]] = False):
+        """Run every generation, then publish a run summary.
+
+        Args:
+            run_name: Name this run's organisms are stored under.
+            log_states: Gene indices to log state after, True for all.
+
+        Returns:
+            (best_organism, run_summary). The organism comes back hydrated
+            because callers read its knowledge; the summary carries every
+            organism of every generation, so a caller can record the whole run
+            without reaching into this object.
+        """
         _log.debug("model_space: %s", self.model_space)
+        self.run_name = run_name
+        self.started_at = int(time.time())
+        self.run_version = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         with ExitStack() as stack:
             # Nothing runs concurrently in sequential mode, so a pool would only
             # add worker processes and force every sync gene to pickle the whole
@@ -466,6 +477,7 @@ class ModelTuner:
                 x_train, x_test, y_train, y_test = next(self.data_fold_generator)
                 # Cached prefixes are only interchangeable between generations
                 # that train on the same rows.
+                self.current_generation = gen + 1
                 self.fold_key = "static" if self.folds_are_static else str(gen)
                 results = await self.experience_population(
                     {'x_train': x_train, 'x_test': x_test, 'y_train': y_train, 'y_test': y_test},
@@ -473,61 +485,230 @@ class ModelTuner:
                     log_states=log_states
                 )
 
+                if not self.sequential:
+                    # Folders have to exist before score_fitness records the
+                    # generation, because the record names where each organism
+                    # actually landed.
+                    self.persist_generation()
                 self.score_fitness(results)
                 _log.info("Generation %d runtime: %.1fs | metrics: %s", gen + 1, time.time() - t, self.metrics[-1])
                 for model in self.population:
                     _log.debug("Organism DNA: %s", model.dna)
 
-            # score is converted into fitness, which always follows highest-is-best
-            best = max(self.population)
-            self.publish_best_organism(best)
+            # Across every generation, not just the last: without elitism a
+            # generation can end worse than one before it, and the run should
+            # not return something it already beat.
+            best_entry = self.find_best_entry()
+            best = self.load_best_organism(best_entry)
+            summary = self.publish_run_summary(best_entry)
+            if self.save_organisms == "best":
+                self.prune_losing_organisms(best_entry)
             if self.cleanup_temp:
                 shutil.rmtree(self.temp_directory, ignore_errors=True)
+            return best, summary
+
+    def load_best_organism(self, best_entry):
+        """Return the winning organism, hydrated, from its own folder.
+
+        It is not copied up to the version folder. The summary records where it
+        lives and this reads it back, so there is exactly one copy of any
+        organism's state.
+
+        Args:
+            best_entry: The winning organism's generation_history entry.
+
+        Returns:
+            The organism, with knowledge loaded.
+        """
+        best = max(self.population)
+        if best_entry is None:
             return best
-
-    def publish_best_organism(self, best):
-        """Write the winning organism to its run folder, and hand it back hydrated.
-
-        The caller gets an organism it can read straight away -- callers do reach
-        into knowledge for predictions and metrics -- which sequential runs have
-        to restore, because they released it to free memory.
-
-        Args:
-            best: The highest-fitness organism.
-        """
-        if self.sequential:
-            # Every organism shared one timestamped folder name, so the loop gave
-            # them their own numbered folders instead. Reload the winner's state
-            # and republish it under the normal name.
+        folder = f"{self.run_folder()}/{best_entry['folder']}"
+        best.folder = folder
+        if os.path.exists(os.path.join(folder, "knowledge.json")):
             best.knowledge = Organism.load_state(
-                best.folder, "knowledge.json", best.save_load_funcs
+                folder, "knowledge.json", best.save_load_funcs
             )
-            best.new_version()
-        best.save()
-        if self.save_organisms == "all":
-            self.publish_losing_organisms(best)
+        best.score = best_entry["score"]
+        best.fitness = best_entry["fitness"]
+        return best
 
-    def publish_losing_organisms(self, best):
-        """Keep every other organism's folder, for comparing the run's branches.
+    def persist_generation(self):
+        """Write this generation's organisms to their folders.
 
-        They go under the winner's folder rather than beside it, so that
-        Organism.load(version="latest") still resolves to a real version.
+        Only for the concurrent path. The sequential loop already saves each
+        organism as it finishes, because it has to release the state to keep
+        peak memory to one organism.
+
+        Organisms sharing a genome share one result, so they share one folder --
+        writing a copy per position would duplicate identical state.
+        """
+        written = {}
+        for i, organism in enumerate(self.population):
+            dna = dna2str(organism.dna, organism.parameters)
+            if dna in written:
+                organism.folder = written[dna]
+                continue
+            organism.folder = self.organism_folder(self.current_generation, i)
+            written[dna] = organism.folder
+            organism.save()
+
+    def prune_losing_organisms(self, best_entry):
+        """Delete every organism folder except the winner's.
+
+        Organisms now write straight to their final generation/organism folder
+        rather than to a temp tree the run throws away, so without this a run
+        keeps every organism's datasets and model weights -- about 20x the
+        winner alone, and the reason hundreds of GB had to be reclaimed by hand.
+
+        Their scores, genomes and hyperparameters survive in run_summary.json,
+        which is what anything downstream actually reads.
 
         Args:
-            best: The already-published winning organism.
+            best_entry: The winning organism's generation_history entry, or None.
         """
-        for i, organism in enumerate(self.population):
-            if organism is best:
+        keep = best_entry["folder"] if best_entry else None
+        for generation in sorted(os.listdir(self.run_folder())):
+            generation_path = os.path.join(self.run_folder(), generation)
+            if not generation.isdigit() or not os.path.isdir(generation_path):
                 continue
-            destination = f"{best.folder}/population/{i}"
-            if self.sequential:
-                # Already on disk under the temp tree, which cleanup_temp is
-                # about to remove. Duplicate genomes point at the twin that ran,
-                # so every index gets the artifacts its genome produced.
-                shutil.copytree(organism.folder, destination, dirs_exist_ok=True)
-            else:
-                organism.folder = destination
-                organism.save()
+            for index in sorted(os.listdir(generation_path)):
+                if f"{generation}/{index}" == keep:
+                    continue
+                shutil.rmtree(os.path.join(generation_path, index), ignore_errors=True)
+            if not os.listdir(generation_path):
+                os.rmdir(generation_path)
+
+    def record_generation(self):
+        """Snapshot this generation's organisms after they have been scored.
+
+        Called from score_fitness, which is where every organism receives its
+        score and fitness and which runs exactly once per generation. Only
+        scalars are kept -- holding the organisms would pin the state a
+        sequential run works to release.
+        """
+        generation = len(self.generation_history) + 1
+        self.generation_history.append([
+            {
+                "generation": generation,
+                "organism_index": i,
+                "score": organism.score,
+                "fitness": organism.fitness,
+                "dna": dna2str(organism.dna, organism.parameters),
+                "parameters": deepcopy(organism.parameters),
+                # The organism's real folder, not one derived from its position.
+                # A carried-forward elite does not re-run, so its state stays in
+                # the generation that produced it -- recording 2/0 for it would
+                # point at a folder nothing ever wrote.
+                "folder": self.relative_folder(organism),
+            }
+            for i, organism in enumerate(self.population)
+        ])
+
+    def relative_folder(self, organism):
+        """An organism's folder, relative to the run folder.
+
+        Relative so the summary survives the run tree being moved or copied.
+
+        Args:
+            organism: The organism to locate.
+
+        Returns:
+            A path like "1/3", or None if it has no folder yet.
+        """
+        if not organism.folder:
+            return None
+        return os.path.relpath(organism.folder, self.run_folder()).replace(os.sep, "/")
+
+    def run_folder(self):
+        """The version-level folder holding this run's summary and generations."""
+        return f"{self.directory}/{self.run_name}/{self.run_version}"
+
+    def organism_folder(self, generation, organism_index):
+        """Where one organism's state lives.
+
+        Generation and index are both in the path, so nothing a later generation
+        writes can land on an earlier one's folder. Numbering by population
+        position alone let a carried-forward elite keep a path that the organism
+        at that position in the next generation then overwrote, and the run
+        published the wrong organism's data under the winner's score.
+
+        Args:
+            generation: 1-based generation number.
+            organism_index: Position in that generation's population.
+
+        Returns:
+            Path to the organism's folder.
+        """
+        return f"{self.run_folder()}/{generation}/{organism_index}"
+
+    def build_run_summary(self, best_entry):
+        """Everything a caller needs to record the run, without tuner internals.
+
+        Args:
+            best_entry: The winning organism's generation_history entry.
+
+        Returns:
+            The dict written to run_summary.json and returned from run().
+        """
+        return {
+            "run_name": self.run_name,
+            "version": self.run_version,
+            "started_at": self.started_at,
+            "finished_at": int(time.time()),
+            "pop_size": self.population_size,
+            "generations": self.generations,
+            "goal": self.goal,
+            "best": {
+                "generation": best_entry["generation"],
+                "organism_index": best_entry["organism_index"],
+                "score": best_entry["score"],
+                "folder": best_entry["folder"],
+            },
+            "metrics": self.metrics,
+            "generations_detail": [
+                {"generation": n + 1, "organisms": organisms}
+                for n, organisms in enumerate(self.generation_history)
+            ],
+        }
+
+    def find_best_entry(self):
+        """The generation_history entry with the best score, across all generations.
+
+        Across all of them, not just the last: a non-elitist generation can end
+        worse than one before it, and the run should not return something it
+        already beat.
+
+        Returns:
+            The winning entry, or None if nothing was recorded.
+        """
+        entries = [e for gen in self.generation_history for e in gen
+                   if e["score"] is not None]
+        if not entries:
+            return None
+        pick = max if self.goal == "max" else min
+        return pick(entries, key=lambda e: e["score"])
+
+    def publish_run_summary(self, best_entry):
+        """Write run_summary.json and the score scatter to the version folder.
+
+        The winner is a pointer here, not a copy: it stays in its own
+        generation/organism folder and the summary says where.
+
+        Args:
+            best_entry: The winning organism's generation_history entry.
+
+        Returns:
+            The summary dict.
+        """
+        summary = self.build_run_summary(best_entry)
+        os.makedirs(self.run_folder(), exist_ok=True)
+        with open(f"{self.run_folder()}/{RUN_SUMMARY_FILE}", "w") as f:
+            json.dump(summary, f, indent=2, default=str)
+        # No chart here. Plotting it would make matplotlib an ezmt dependency,
+        # and the summary carries every organism's score, so a caller can draw
+        # it from this file without the library taking that on.
+        return summary
 
 
 def find_checkpoint_prefixes(population):
