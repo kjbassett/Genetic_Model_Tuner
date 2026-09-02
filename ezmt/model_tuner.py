@@ -424,7 +424,6 @@ class ModelTuner:
                     worst = data['score']
                     worst_dna = dna
 
-        self.record_generation()
         self.metrics.append({'unique_organisms': len(unique_organisms.keys()),
                              'average': np.mean(scores),
                              'variance': np.var(scores),
@@ -441,6 +440,12 @@ class ModelTuner:
                 model.fitness = 1
             else:
                 model.fitness = (model.score - worst) / (best - worst)
+
+        # After the loop above, not before it: score and fitness are assigned
+        # there, and a snapshot taken any earlier records every organism's
+        # uninitialised 0 -- which reads as a real score in the run summary and
+        # in every database row built from it.
+        self.record_generation()
 
     async def run(self, run_name, log_states: Union[bool, int, Iterable[int]] = False):
         """Run every generation, then publish a run summary.

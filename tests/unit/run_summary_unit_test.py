@@ -100,6 +100,29 @@ class TestRunSummary(RunSummaryTestCase):
             with self.subTest(field=field):
                 self.assertIn(field, entry)
 
+    async def test_recorded_scores_are_the_scores_the_run_measured(self):
+        # Arrange - the snapshot is taken in score_fitness, which assigns score
+        # and fitness in a loop of its own. Taken before that loop it records
+        # every organism's uninitialised 0, which reads as a real score in the
+        # summary and in every database row built from it.
+        tuner, _best, summary = await self.run_tuner(generations=2)
+        # Act
+        for detail, metrics in zip(summary["generations_detail"], tuner.metrics):
+            recorded = [o["score"] for o in detail["organisms"]]
+            # Assert
+            with self.subTest(generation=detail["generation"]):
+                self.assertEqual(max(recorded), metrics["best"])
+                self.assertEqual(min(recorded), metrics["worst"])
+
+    async def test_every_organism_is_recorded_with_a_fitness(self):
+        # Arrange - assigned in the same loop as the score, so it fails the
+        # same way.
+        _tuner, _best, summary = await self.run_tuner()
+        fitnesses = [o["fitness"]
+                     for o in summary["generations_detail"][0]["organisms"]]
+        # Assert - the best organism's fitness is 1.0 by construction
+        self.assertEqual(max(fitnesses), 1.0)
+
     async def test_the_best_is_a_pointer_not_a_copy(self):
         # Arrange - the winner stays where it ran; the summary says where.
         tuner, _best, summary = await self.run_tuner()
