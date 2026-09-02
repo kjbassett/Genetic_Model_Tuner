@@ -17,6 +17,7 @@ import time
 from copy import deepcopy
 
 from ezmt.organism import Organism, dna2str
+from ezmt.plotting import plot_generation_scores
 from ezmt.common_funcs import resolve_log_states
 from ezmt.config_validation import validate_config
 from ezmt.the_pickler import check_state_picklability
@@ -705,10 +706,26 @@ class ModelTuner:
         os.makedirs(self.run_folder(), exist_ok=True)
         with open(f"{self.run_folder()}/{RUN_SUMMARY_FILE}", "w") as f:
             json.dump(summary, f, indent=2, default=str)
-        # No chart here. Plotting it would make matplotlib an ezmt dependency,
-        # and the summary carries every organism's score, so a caller can draw
-        # it from this file without the library taking that on.
+        self.publish_generation_scores()
         return summary
+
+    def publish_generation_scores(self):
+        """Draw the run's score scatter beside its summary.
+
+        A chart is a report, not a result: a run that has just spent hours
+        computing should not lose its output because a plotting backend is
+        unhappy. Failures are logged and swallowed.
+
+        Returns:
+            Path to the image, or None if it was not drawn.
+        """
+        try:
+            return plot_generation_scores(
+                self.generation_history, self.run_folder(), goal=self.goal,
+                title=f"{self.run_name} / {self.run_version}")
+        except Exception:
+            _log.exception("could not draw the generation score chart")
+            return None
 
 
 def find_checkpoint_prefixes(population):

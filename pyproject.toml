@@ -14,6 +14,7 @@ readme = "README.md"
 requires-python = ">=3.6"
 
 dependencies = [
+    "matplotlib",
     "numpy",
     "pandas",
     "pyarrow",

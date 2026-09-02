@@ -18,6 +18,7 @@ import pandas as pd
 from ezmt.hyperparameters import DiscreteNonOrdinal
 from ezmt.model_tuner import RUN_SUMMARY_FILE, ModelTuner
 from ezmt.organism import Organism
+from ezmt.plotting import GENERATION_SCORES_FILE
 from tests.unit.sequential_unit_test import build_model_space
 
 
@@ -58,6 +59,25 @@ class TestRunSummary(RunSummaryTestCase):
 
     async def test_the_summary_is_written_at_the_version_level(self):
         tuner, _best, _summary = await self.run_tuner()
+        self.assertTrue(
+            os.path.isfile(os.path.join(tuner.run_folder(), RUN_SUMMARY_FILE)))
+
+    async def test_the_chart_is_written_beside_it(self):
+        # Arrange - it sits at the version level, not in a generation folder,
+        # because it is about the run as a whole.
+        tuner, _best, _summary = await self.run_tuner(generations=2)
+        # Assert
+        self.assertTrue(os.path.isfile(
+            os.path.join(tuner.run_folder(), GENERATION_SCORES_FILE)))
+
+    async def test_a_chart_failure_does_not_lose_the_run(self):
+        # Arrange - hours of compute should not be thrown away by a plotting
+        # backend. The summary is the result; the chart is a report on it.
+        with patch("ezmt.model_tuner.plot_generation_scores",
+                   side_effect=RuntimeError("no backend")):
+            tuner, _best, summary = await self.run_tuner()
+        # Assert
+        self.assertIsNotNone(summary["best"])
         self.assertTrue(
             os.path.isfile(os.path.join(tuner.run_folder(), RUN_SUMMARY_FILE)))
 
