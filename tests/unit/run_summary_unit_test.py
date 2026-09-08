@@ -187,5 +187,72 @@ class TestLoadingFromTheSummary(RunSummaryTestCase):
         self.assertIsInstance(loaded.knowledge.get("frame"), pd.DataFrame)
 
 
+class TestPruningEachGeneration(RunSummaryTestCase):
+    """Disk is freed as the run goes, not at the end.
+
+    Organisms write straight to their final folder, so pruning only at the end
+    keeps every generation on disk at once -- 48 organisms peaked near 140 GB.
+    """
+
+    def surviving_folders(self, tuner):
+        """Every {generation}/{index} folder still on disk."""
+        found = []
+        for generation in sorted(os.listdir(tuner.run_folder())):
+            path = os.path.join(tuner.run_folder(), generation)
+            if generation.isdigit() and os.path.isdir(path):
+                found += [f"{generation}/{i}" for i in sorted(os.listdir(path))]
+        return found
+
+    async def test_only_one_organism_survives_a_multi_generation_run(self):
+        # Arrange / Act
+        tuner, _best, summary = await self.run_tuner(generations=3)
+        # Assert
+        self.assertEqual(self.surviving_folders(tuner),
+                         [summary["best"]["folder"]])
+
+    async def test_the_survivor_is_the_best_across_every_generation(self):
+        # Arrange - the danger is pruning to the best of the *current*
+        # generation, which deletes an earlier and better winner.
+        _tuner, _best, summary = await self.run_tuner(generations=3)
+        every = [o["score"] for g in summary["generations_detail"]
+                 for o in g["organisms"]]
+        # Assert
+        self.assertEqual(summary["best"]["score"], max(every))
+
+    async def test_the_winner_folder_the_summary_names_still_exists(self):
+        # Arrange - a carried elite keeps its original folder, so pruning a
+        # later generation must not remove what the summary points at.
+        tuner, _best, summary = await self.run_tuner(generations=3)
+        # Assert
+        self.assertTrue(os.path.isdir(
+            os.path.join(tuner.run_folder(), summary["best"]["folder"])))
+
+    async def test_the_winner_is_still_loadable_after_pruning(self):
+        # Arrange - a surviving folder that cannot be read is not a winner.
+        _tuner, best, _summary = await self.run_tuner(generations=2)
+        # Assert
+        self.assertIsInstance(best.knowledge.get("frame"), pd.DataFrame)
+
+    async def test_keeping_everything_prunes_nothing(self):
+        # Arrange - save_organisms="all" must be untouched by this. Counted as
+        # "more than the winner" rather than population times generations,
+        # because ezmt shares one folder per distinct genome and this model
+        # space only forks two ways.
+        tuner, _best, summary = await self.run_tuner(
+            generations=2, save_organisms="all")
+        # Act
+        surviving = self.surviving_folders(tuner)
+        # Assert
+        self.assertGreater(len(surviving), 1)
+        self.assertIn(summary["best"]["folder"], surviving)
+
+    async def test_a_single_generation_still_leaves_the_winner(self):
+        # Arrange - the boundary case, where the loop prunes exactly once.
+        tuner, _best, summary = await self.run_tuner(generations=1)
+        # Assert
+        self.assertEqual(self.surviving_folders(tuner),
+                         [summary["best"]["folder"]])
+
+
 if __name__ == "__main__":
     unittest.main()

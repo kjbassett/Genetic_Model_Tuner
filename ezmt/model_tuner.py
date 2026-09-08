@@ -500,6 +500,8 @@ class ModelTuner:
                 _log.info("Generation %d runtime: %.1fs | metrics: %s", gen + 1, time.time() - t, self.metrics[-1])
                 for model in self.population:
                     _log.debug("Organism DNA: %s", model.dna)
+                if self.save_organisms == "best":
+                    self.prune_losing_organisms(self.find_best_entry())
 
             # Across every generation, not just the last: without elitism a
             # generation can end worse than one before it, and the run should
@@ -507,8 +509,6 @@ class ModelTuner:
             best_entry = self.find_best_entry()
             best = self.load_best_organism(best_entry)
             summary = self.publish_run_summary(best_entry)
-            if self.save_organisms == "best":
-                self.prune_losing_organisms(best_entry)
             if self.cleanup_temp:
                 shutil.rmtree(self.temp_directory, ignore_errors=True)
             return best, summary
@@ -560,18 +560,19 @@ class ModelTuner:
             organism.save()
 
     def prune_losing_organisms(self, best_entry):
-        """Delete every organism folder except the winner's.
+        """Delete every organism folder except the best one seen so far.
 
-        Organisms now write straight to their final generation/organism folder
-        rather than to a temp tree the run throws away, so without this a run
-        keeps every organism's datasets and model weights -- about 20x the
-        winner alone, and the reason hundreds of GB had to be reclaimed by hand.
+        Runs after each generation, not once at the end: organisms write
+        straight to their final folder, so waiting keeps every generation on
+        disk at once -- 48 organisms peaked near 140 GB, and five generations
+        would be over 300.
 
-        Their scores, genomes and hyperparameters survive in run_summary.json,
-        which is what anything downstream actually reads.
+        Best *so far* rather than best of this generation, because a carried
+        elite keeps its original folder and the run summary points at it. Their
+        scores and genomes survive in run_summary.json either way.
 
         Args:
-            best_entry: The winning organism's generation_history entry, or None.
+            best_entry: The best generation_history entry so far, or None.
         """
         keep = best_entry["folder"] if best_entry else None
         for generation in sorted(os.listdir(self.run_folder())):
