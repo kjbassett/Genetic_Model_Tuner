@@ -17,6 +17,7 @@ import time
 from copy import deepcopy
 
 from ezmt.organism import Organism, dna2str
+from ezmt.storage import TrainingStore
 from ezmt.plotting import plot_generation_scores
 from ezmt.common_funcs import resolve_log_states
 from ezmt.config_validation import validate_config
@@ -59,6 +60,8 @@ class ModelTuner:
             temp_directory: str = None,
             cleanup_temp: bool = False,
             save_organisms: str = "best",
+            database_path: str = None,
+            notes: str = None,
     ):
         """
         Args:
@@ -70,6 +73,11 @@ class ModelTuner:
             cleanup_temp: Delete that tree once the run finishes.
             save_organisms: "best" saves only the winner; "all" additionally
                 keeps every organism's folder for comparison.
+            database_path: SQLite file to record runs and organisms in. None
+                skips recording. A host may point this at its own database so
+                foreign keys to ezmt_Model stay enforced.
+            notes: Free text describing what the run is testing, stored on the
+                run row.
         """
         if save_organisms not in ("best", "all"):
             raise ValueError(
@@ -103,6 +111,8 @@ class ModelTuner:
         self.generation_history = []
         self.started_at = None
         self.run_version = None
+        self.store = TrainingStore(database_path) if database_path else None
+        self.notes = notes
         self.run_name = None
         self.current_generation = 0
 
@@ -509,9 +519,23 @@ class ModelTuner:
             best_entry = self.find_best_entry()
             best = self.load_best_organism(best_entry)
             summary = self.publish_run_summary(best_entry)
+            summary.update(await self.record_run(summary))
             if self.cleanup_temp:
                 shutil.rmtree(self.temp_directory, ignore_errors=True)
             return best, summary
+
+    async def record_run(self, summary):
+        """Save the run and its organisms, if a database was configured.
+
+        Args:
+            summary: The run summary.
+
+        Returns:
+            Ids to merge into the summary, or empty when nothing was recorded.
+        """
+        if not self.store:
+            return {}
+        return await self.store.save_run(summary, self.notes)
 
     def load_best_organism(self, best_entry):
         """Return the winning organism, hydrated, from its own folder.
