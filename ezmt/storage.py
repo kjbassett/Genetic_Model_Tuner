@@ -122,11 +122,73 @@ class TrainingStore:
             self._write, [(_CREATE_RUN_TABLE, ()), (_CREATE_MODEL_TABLE, ())]
         )
 
-    async def save_run(self, summary: dict, notes: Optional[str] = None) -> dict:
-        """Record a finished run and every organism in it.
+    async def open_run(self, summary: dict, notes: Optional[str] = None) -> int:
+        """Record a run before its first generation finishes.
 
-        The winner's row is written like any other; a host with metrics of its
-        own attaches them afterwards with update_model_metrics.
+        Written up front so a crash leaves behind the generations that did
+        complete. finished_at stays NULL until finish_run.
+
+        Args:
+            summary: Anything carrying run_name, version, started_at, pop_size
+                and generations.
+            notes: Free text describing what the run is testing.
+
+        Returns:
+            The run's id.
+        """
+        await self.create_tables()
+        return await asyncio.to_thread(self._insert_run, summary, notes)
+
+    async def save_generation(
+        self, run_id: int, run_name: str, version: str, organisms: List[dict]
+    ) -> None:
+        """Record one generation's organisms as soon as they are scored.
+
+        Written with is_winner 0; finish_run sets the flag once every
+        generation has been seen, because an earlier one can still hold the
+        best organism.
+
+        Args:
+            run_id: The run these belong to.
+            run_name: Organism name shared by the run.
+            version: Version string shared by the run.
+            organisms: generation_history entries for one generation.
+        """
+        await asyncio.to_thread(
+            self._insert_organisms, run_id, run_name, version, organisms)
+        _log.info("Recorded %s organisms for run %s", len(organisms), run_id)
+
+    async def finish_run(
+        self, run_id: int, best: dict, finished_at: Optional[int] = None
+    ) -> Optional[int]:
+        """Mark a run complete and flag its winning organism.
+
+        Args:
+            run_id: The run to close.
+            best: The winning organism's summary entry.
+            finished_at: Unix seconds; defaults to now.
+
+        Returns:
+            The winning organism's row id.
+        """
+        await asyncio.to_thread(self._write, [
+            (f"UPDATE {RUN_TABLE} SET finished_at = ? WHERE id = ?",
+             (int(time.time()) if finished_at is None else int(finished_at), run_id)),
+            (f"UPDATE {MODEL_TABLE} SET is_winner = 1 WHERE training_run_id = ?"
+             f" AND generation = ? AND organism_index = ?",
+             (run_id, best["generation"], best["organism_index"])),
+        ])
+        rows = await asyncio.to_thread(
+            self._read,
+            f"SELECT id FROM {MODEL_TABLE} WHERE training_run_id = ? AND is_winner = 1",
+            (run_id,))
+        return rows[0][0] if rows else None
+
+    async def save_run(self, summary: dict, notes: Optional[str] = None) -> dict:
+        """Record a whole finished run in one call.
+
+        For callers producing a run in a single step rather than generation by
+        generation.
 
         Args:
             summary: The dict ModelTuner.run returns.
@@ -135,17 +197,13 @@ class TrainingStore:
         Returns:
             {"training_run_id": int, "winner_model_id": int}.
         """
-        await self.create_tables()
-        run_id = await asyncio.to_thread(self._insert_run, summary, notes)
-        await asyncio.to_thread(self._insert_organisms, run_id, summary)
-        winner_id = await self.get_winner_id(
-            summary["run_name"], summary["version"]
-        )
-        _log.info(
-            "Recorded run %s/%s: %s organisms",
-            summary["run_name"], summary["version"],
-            sum(len(g["organisms"]) for g in summary["generations_detail"]),
-        )
+        run_id = await self.open_run(summary, notes)
+        for generation in summary["generations_detail"]:
+            await self.save_generation(
+                run_id, summary["run_name"], summary["version"],
+                generation["organisms"])
+        winner_id = await self.finish_run(
+            run_id, summary["best"], summary.get("finished_at"))
         return {"training_run_id": run_id, "winner_model_id": winner_id}
 
     def _insert_run(self, summary: dict, notes: Optional[str]) -> int:
@@ -159,27 +217,24 @@ class TrainingStore:
              summary.get("generations"), notes),
         )])
 
-    def _insert_organisms(self, run_id: int, summary: dict) -> None:
-        """Insert one row per organism of every generation."""
-        best = summary["best"]
+    def _insert_organisms(
+        self, run_id: int, run_name: str, version: str, organisms: List[dict]
+    ) -> None:
+        """Insert one row per organism of a single generation."""
         created_at = int(time.time())
-        statements = []
-        for generation in summary["generations_detail"]:
-            for organism in generation["organisms"]:
-                is_winner = (organism["generation"], organism["organism_index"]) == (
-                    best["generation"], best["organism_index"])
-                statements.append((
-                    f"INSERT INTO {MODEL_TABLE} (training_run_id, organism_name,"
-                    f" organism_version, generation, organism_index, is_winner,"
-                    f" created_at, score, fitness, parameters, dna_summary)"
-                    f" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (run_id, summary["run_name"], summary["version"],
-                     organism["generation"], organism["organism_index"],
-                     int(is_winner), created_at, organism["score"],
-                     organism["fitness"], _as_json(organism["parameters"]),
-                     organism["dna"]),
-                ))
-        self._write(statements)
+        self._write([(
+            f"INSERT INTO {MODEL_TABLE} (training_run_id, organism_name,"
+            f" organism_version, generation, organism_index, is_winner,"
+            f" created_at, score, fitness, parameters, dna_summary)"
+            f" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            # is_winner is a bound 0 rather than a literal in the VALUES list:
+            # counting placeholders around a literal silently shifted every
+            # column after it, putting created_at into is_winner.
+            (run_id, run_name, version, organism["generation"],
+             organism["organism_index"], 0, created_at, organism["score"],
+             organism["fitness"], _as_json(organism["parameters"]),
+             organism["dna"]),
+        ) for organism in organisms])
 
     async def update_model_metrics(
         self,

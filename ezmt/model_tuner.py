@@ -112,6 +112,7 @@ class ModelTuner:
         self.started_at = None
         self.run_version = None
         self.store = TrainingStore(database_path) if database_path else None
+        self.training_run_id = None
         self.notes = notes
         self.run_name = None
         self.current_generation = 0
@@ -474,6 +475,9 @@ class ModelTuner:
         self.run_name = run_name
         self.started_at = int(time.time())
         self.run_version = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        # Opened before the first generation so a crash leaves behind whatever
+        # finished. A run killed partway keeps finished_at NULL.
+        self.training_run_id = await self.open_run()
         with ExitStack() as stack:
             # Nothing runs concurrently in sequential mode, so a pool would only
             # add worker processes and force every sync gene to pickle the whole
@@ -507,6 +511,7 @@ class ModelTuner:
                     # actually landed.
                     self.persist_generation()
                 self.score_fitness(results)
+                await self.record_generation_rows()
                 _log.info("Generation %d runtime: %.1fs | metrics: %s", gen + 1, time.time() - t, self.metrics[-1])
                 for model in self.population:
                     _log.debug("Organism DNA: %s", model.dna)
@@ -519,23 +524,63 @@ class ModelTuner:
             best_entry = self.find_best_entry()
             best = self.load_best_organism(best_entry)
             summary = self.publish_run_summary(best_entry)
-            summary.update(await self.record_run(summary))
+            summary.update(await self.close_run(best_entry))
             if self.cleanup_temp:
                 shutil.rmtree(self.temp_directory, ignore_errors=True)
             return best, summary
 
-    async def record_run(self, summary):
-        """Save the run and its organisms, if a database was configured.
+    async def open_run(self):
+        """Record the run row, if a database was configured.
+
+        Returns:
+            The run's id, or None when nothing is being recorded.
+        """
+        if not self.store:
+            return None
+        return await self.store.open_run(self.build_run_header(), self.notes)
+
+    def build_run_header(self):
+        """The run's own fields, available before any generation has finished.
+
+        Returns:
+            A dict of the columns open_run needs.
+        """
+        return {
+            "run_name": self.run_name,
+            "version": self.run_version,
+            "started_at": self.started_at,
+            "pop_size": self.population_size,
+            "generations": self.generations,
+        }
+
+    async def record_generation_rows(self):
+        """Persist the generation that just finished.
+
+        Written as each generation completes rather than once at the end: a run
+        that dies in generation 2 used to lose generation 1 as well, which cost
+        21 hours of compute the one time it happened.
+        """
+        if not self.store or not self.generation_history:
+            return
+        await self.store.save_generation(
+            self.training_run_id, self.run_name, self.run_version,
+            self.generation_history[-1],
+        )
+
+    async def close_run(self, best_entry):
+        """Mark the run finished and flag its winner.
 
         Args:
-            summary: The run summary.
+            best_entry: The winning organism's generation_history entry.
 
         Returns:
             Ids to merge into the summary, or empty when nothing was recorded.
         """
-        if not self.store:
+        if not self.store or best_entry is None:
             return {}
-        return await self.store.save_run(summary, self.notes)
+        winner_id = await self.store.finish_run(self.training_run_id, best_entry)
+        return {"training_run_id": self.training_run_id,
+                "winner_model_id": winner_id}
 
     def load_best_organism(self, best_entry):
         """Return the winning organism, hydrated, from its own folder.

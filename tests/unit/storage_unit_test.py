@@ -269,3 +269,90 @@ class TestTheTunerRecordsItsOwnRun(unittest.IsolatedAsyncioTestCase):
         # Assert
         self.assertFalse(os.path.exists(self.path))
         self.assertNotIn("training_run_id", summary)
+
+
+class TestAGenerationSurvivesACrash(unittest.IsolatedAsyncioTestCase):
+    """Generation 1 must outlive a failure in generation 2.
+
+    A crash in generation 2 organism 26 once lost the whole run, including 12.5
+    hours of completed generation 1, because nothing was written until run()
+    returned.
+    """
+
+    def setUp(self):
+        self.directory = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.directory, ignore_errors=True)
+        self.path = os.path.join(self.directory, "training.sqlite")
+
+    def rows(self, sql):
+        connection = sqlite3.connect(self.path)
+        try:
+            return connection.execute(sql).fetchall()
+        finally:
+            connection.close()
+
+    async def run_until_it_fails(self, fail_on_generation=2):
+        from unittest.mock import patch
+        from ezmt.hyperparameters import DiscreteNonOrdinal
+        from ezmt.model_tuner import ModelTuner
+        from tests.unit.sequential_unit_test import build_model_space
+
+        tuner = ModelTuner(
+            build_model_space(), {"mode": DiscreteNonOrdinal(["a", "b"])},
+            pop_size=4, sequential=True, goal="max", generations=3,
+            directory=self.directory, temp_directory=f"{self.directory}/.tmp",
+            database_path=self.path)
+
+        real = tuner.score_fitness
+        def explode(results):
+            real(results)
+            if len(tuner.generation_history) >= fail_on_generation:
+                raise RuntimeError("crash")
+        tuner.score_fitness = explode
+
+        with patch("ezmt.model_tuner.choose_hyperparams",
+                   side_effect=[{"mode": m} for m in "aabb"] * 6):
+            with self.assertRaises(RuntimeError):
+                await tuner.run("test")
+
+    async def test_the_completed_generation_is_still_recorded(self):
+        # Arrange / Act
+        await self.run_until_it_fails()
+        # Assert - generation 1's four organisms survived the crash
+        self.assertEqual(
+            self.rows(f"SELECT COUNT(*) FROM {MODEL_TABLE} WHERE generation = 1")[0][0], 4)
+
+    async def test_the_run_row_exists(self):
+        await self.run_until_it_fails()
+        self.assertEqual(self.rows(f"SELECT COUNT(*) FROM {RUN_TABLE}")[0][0], 1)
+
+    async def test_an_unfinished_run_has_no_finished_at(self):
+        # Arrange - that NULL is how a killed run is told from a completed one.
+        await self.run_until_it_fails()
+        self.assertIsNone(self.rows(f"SELECT finished_at FROM {RUN_TABLE}")[0][0])
+
+    async def test_no_winner_is_flagged_until_the_run_closes(self):
+        # Arrange - an earlier generation can still hold the best organism, so
+        # flagging one mid-run could name the wrong row.
+        await self.run_until_it_fails()
+        self.assertEqual(
+            self.rows(f"SELECT SUM(is_winner) FROM {MODEL_TABLE}")[0][0], 0)
+
+    async def test_a_run_that_finishes_flags_exactly_one_winner(self):
+        # Arrange - the inverse, so the flag is proven to be set somewhere.
+        from unittest.mock import patch
+        from ezmt.hyperparameters import DiscreteNonOrdinal
+        from ezmt.model_tuner import ModelTuner
+        from tests.unit.sequential_unit_test import build_model_space
+        tuner = ModelTuner(
+            build_model_space(), {"mode": DiscreteNonOrdinal(["a", "b"])},
+            pop_size=4, sequential=True, goal="max", generations=2,
+            directory=self.directory, temp_directory=f"{self.directory}/.tmp",
+            database_path=self.path)
+        with patch("ezmt.model_tuner.choose_hyperparams",
+                   side_effect=[{"mode": m} for m in "aabb"] * 4):
+            await tuner.run("test")
+        # Assert
+        self.assertEqual(
+            self.rows(f"SELECT SUM(is_winner) FROM {MODEL_TABLE}")[0][0], 1)
+        self.assertIsNotNone(self.rows(f"SELECT finished_at FROM {RUN_TABLE}")[0][0])
